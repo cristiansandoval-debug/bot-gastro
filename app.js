@@ -10,6 +10,8 @@ const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT;
 
+const sessions = {};
+
 app.get("/", (req, res) => {
   res.status(200).send("Bot Gastro activo");
 });
@@ -26,23 +28,45 @@ app.get("/webhook", (req, res) => {
   return res.sendStatus(403);
 });
 
-async function getOpenAIResponse(userMessage) {
+function getSession(from) {
+  if (!sessions[from]) {
+    sessions[from] = {
+      messages: [
+        {
+          role: "system",
+          content:
+            SYSTEM_PROMPT +
+            "\n\nIMPORTANTE: Recuerda siempre el contexto de la conversación. Si el paciente responde con un número, debes interpretarlo según el último menú mostrado y no según el menú principal."
+        }
+      ]
+    };
+  }
+
+  return sessions[from];
+}
+
+async function getOpenAIResponse(from, userMessage) {
   try {
+    const session = getSession(from);
+
+    session.messages.push({
+      role: "user",
+      content: userMessage
+    });
+
+    if (session.messages.length > 20) {
+      session.messages = [
+        session.messages[0],
+        ...session.messages.slice(-18)
+      ];
+    }
+
     const response = await axios.post(
       "https://api.openai.com/v1/chat/completions",
       {
         model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content: SYSTEM_PROMPT
-          },
-          {
-            role: "user",
-            content: userMessage
-          }
-        ],
-        temperature: 0.3
+        messages: session.messages,
+        temperature: 0.2
       },
       {
         headers: {
@@ -52,9 +76,17 @@ async function getOpenAIResponse(userMessage) {
       }
     );
 
-    return response.data.choices[0].message.content;
+    const reply = response.data.choices[0].message.content;
+
+    session.messages.push({
+      role: "assistant",
+      content: reply
+    });
+
+    return reply;
   } catch (error) {
     console.error("Error OpenAI:", error.response?.data || error.message);
+
     return "Lo siento, hubo un problema al procesar tu mensaje. Por favor intenta nuevamente.";
   }
 }
@@ -78,7 +110,10 @@ async function sendWhatsAppMessage(to, message) {
       }
     );
   } catch (error) {
-    console.error("Error enviando WhatsApp:", error.response?.data || error.message);
+    console.error(
+      "Error enviando WhatsApp:",
+      error.response?.data || error.message
+    );
   }
 }
 
@@ -93,7 +128,7 @@ app.post("/webhook", async (req, res) => {
 
       console.log("Mensaje recibido:", userText);
 
-      const reply = await getOpenAIResponse(userText);
+      const reply = await getOpenAIResponse(from, userText);
 
       await sendWhatsAppMessage(from, reply);
     }

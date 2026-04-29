@@ -56,6 +56,12 @@ const STEPS = {
   CONFIRMAR_ENVIO:       "confirmar_envio",
   // Flujo otra duda
   OTRA_DUDA:             "otra_duda",
+  OTRA_DUDA_MENU:        "otra_duda_menu",
+  OTRA_DUDA_CONTACTO:    "otra_duda_contacto",
+  OTRA_DUDA_SOBRECUPO:   "otra_duda_sobrecupo",
+  // Confirmaciones inline
+  CONFIRMAR_TELEFONO:    "confirmar_telefono",
+  CONFIRMAR_CORREO:      "confirmar_correo",
 };
 
 // ============================================================
@@ -112,6 +118,20 @@ function cleanText(text) {
 
 function isResetCommand(text) {
   return ["reiniciar", "comenzar de nuevo", "inicio", "menu", "menú", "reset", "volver", "salir"].includes(text);
+}
+
+// Formatea teléfono chileno a +56 9 XXXX XXXX
+function formatearTelefono(raw) {
+  let digits = raw.replace(/\D/g, "");
+  if (digits.startsWith("56")) digits = digits.slice(2);
+  if (digits.startsWith("0")) digits = digits.slice(1);
+  if (digits.length === 9) {
+    return `+56 ${digits.slice(0,1)} ${digits.slice(1,5)} ${digits.slice(5)}`;
+  }
+  if (digits.length === 8) {
+    return `+56 ${digits.slice(0,2)} ${digits.slice(2,6)} ${digits.slice(6)}`;
+  }
+  return null;
 }
 
 // Calcula los próximos N días de la semana (0=domingo, 1=lunes... 3=miércoles, 2=martes)
@@ -528,11 +548,8 @@ async function procesarMensaje(from, text, session) {
       return msgTipoProcedimiento();
     }
     if (t === "3") {
-      session.step = STEPS.OTRA_DUDA;
-      return await gptResponde(
-        "El paciente tiene una duda general. Respóndele indicando que puede escribirla y que derivarás al equipo si es necesario.",
-        session.history
-      ) || "Por favor, escribe tu duda y te ayudaré o derivaré al equipo correspondiente.";
+      session.step = STEPS.OTRA_DUDA_MENU;
+      return `¿En qué puedo ayudarte?\n\n1️⃣ Deseo contactarme\n2️⃣ Solicitar sobrecupo\n3️⃣ Cambiar horas\n4️⃣ Consultar perfil Dr. Sandoval`;
     }
     return msgMenuPrincipal();
   }
@@ -634,21 +651,44 @@ async function procesarMensaje(from, text, session) {
   }
 
   if (session.step === STEPS.TELEFONO) {
-    if (text.trim().length < 7) return "Por favor ingresa un *teléfono válido*.";
-    session.data.telefono = text.trim();
-    session.step = STEPS.CORREO;
-    return "¿Cuál es tu *correo electrónico*?";
+    const formateado = formatearTelefono(text.trim());
+    if (!formateado) return "Por favor ingresa un *teléfono válido* (ej: 9 9783 0139).";
+    session.data.telefonoTemp = formateado;
+    session.step = STEPS.CONFIRMAR_TELEFONO;
+    return `¿Tu número es *${formateado}*?\n\n1️⃣ Sí, es correcto\n2️⃣ No, corregir`;
+  }
+
+  if (session.step === STEPS.CONFIRMAR_TELEFONO) {
+    if (t === "1") {
+      session.data.telefono = session.data.telefonoTemp;
+      session.step = STEPS.CORREO;
+      return "¿Cuál es tu *correo electrónico*?";
+    }
+    if (t === "2") {
+      session.step = STEPS.TELEFONO;
+      return "Ingresa tu *número de teléfono* nuevamente:";
+    }
+    return `¿Tu número es *${session.data.telefonoTemp}*?\n\n1️⃣ Sí, es correcto\n2️⃣ No, corregir`;
   }
 
   if (session.step === STEPS.CORREO) {
-    if (!text.includes("@")) return "Por favor ingresa un *correo electrónico válido*.";
-    session.data.correo = text.trim().toLowerCase();
-    session.step = STEPS.PREVISION;
-    return `¿Cuál es tu *previsión*?
+    if (!text.includes("@") || !text.includes(".")) return "Por favor ingresa un *correo electrónico válido*.";
+    session.data.correoTemp = text.trim().toLowerCase();
+    session.step = STEPS.CONFIRMAR_CORREO;
+    return `¿Tu correo es *${session.data.correoTemp}*?\n\n1️⃣ Sí, es correcto\n2️⃣ No, corregir`;
+  }
 
-1️⃣ Fonasa
-2️⃣ Isapre
-3️⃣ Particular`;
+  if (session.step === STEPS.CONFIRMAR_CORREO) {
+    if (t === "1") {
+      session.data.correo = session.data.correoTemp;
+      session.step = STEPS.PREVISION;
+      return `¿Cuál es tu *previsión*?\n\n1️⃣ Fonasa\n2️⃣ Isapre\n3️⃣ Particular`;
+    }
+    if (t === "2") {
+      session.step = STEPS.CORREO;
+      return "Ingresa tu *correo electrónico* nuevamente:";
+    }
+    return `¿Tu correo es *${session.data.correoTemp}*?\n\n1️⃣ Sí, es correcto\n2️⃣ No, corregir`;
   }
 
   // ── PREVISIÓN ────────────────────────────────────────────
@@ -768,13 +808,48 @@ async function procesarMensaje(from, text, session) {
     return `Por favor, envía una *foto clara de tu orden médica* 📷\n\n_La imagen se adjuntará a tu solicitud como respaldo._`;
   }
 
-  // ── OTRA DUDA ────────────────────────────────────────────
-  if (session.step === STEPS.OTRA_DUDA) {
-    const respuesta = await gptResponde(
-      `El paciente pregunta: "${text}". Responde de forma clara y breve. Si no puedes resolver, indica que puede escribir a info@gastroenterologos.cl`,
-      session.history
-    );
-    return respuesta || "Para consultas específicas puedes escribir a info@gastroenterologos.cl y nuestro equipo te ayudará. 🙏\n\nEscribe *menú* para volver al inicio.";
+  // ── OTRA DUDA - MENÚ ─────────────────────────────────────
+  if (session.step === STEPS.OTRA_DUDA || session.step === STEPS.OTRA_DUDA_MENU) {
+    if (t === "1") {
+      session.step = STEPS.OTRA_DUDA_CONTACTO;
+      return `¿Con cuál de estas instituciones deseas contactarte?\n\n1️⃣ Clínica Alemana Osorno\n2️⃣ Clínica Santa María\n3️⃣ gastroenterologos.cl\n4️⃣ Volver`;
+    }
+    if (t === "2") {
+      session.step = STEPS.OTRA_DUDA_SOBRECUPO;
+      return `Los sobrecupos se gestionan de la siguiente forma:\n\n🏥 *Clínica Santa María:* solo de forma *presencial* en la clínica.\n\n🌐 *gastroenterologos.cl (telemedicina):* escribe a 📧 info@gastroenterologos.cl solicitando el sobrecupo.\n\n¿Necesitas algo más? Escribe *menú* para volver al inicio.`;
+    }
+    if (t === "3") {
+      session.step = STEPS.MENU_PRINCIPAL;
+      return `Para *cambios de hora* o cancelaciones:\n\n🏥 *Clínica Alemana Osorno:* 📞 600 401 5007 o presencial.\n\n🏥 *Clínica Santa María:* 📞 +56 2 2913 0000, 💬 WhatsApp +56 2 2914 2472 o presencial.\n\n🌐 *gastroenterologos.cl:* 📧 info@gastroenterologos.cl\n\nEscribe *menú* para volver al inicio.`;
+    }
+    if (t === "4") {
+      session.step = STEPS.MENU_PRINCIPAL;
+      return `Aquí puedes revisar el perfil del *Dr. Cristián Sandoval Vergés*:\n\n🌐 https://gastroenterologos.cl/dr-cristian-sandoval-verges/\n\nEscribe *menú* si necesitas algo más.`;
+    }
+    // Si escribe texto libre, mostrar el menú
+    session.step = STEPS.OTRA_DUDA_MENU;
+    return `¿En qué puedo ayudarte?\n\n1️⃣ Deseo contactarme\n2️⃣ Solicitar sobrecupo\n3️⃣ Cambiar horas\n4️⃣ Consultar perfil Dr. Sandoval`;
+  }
+
+  // ── OTRA DUDA - CONTACTO ──────────────────────────────────
+  if (session.step === STEPS.OTRA_DUDA_CONTACTO) {
+    if (t === "1") {
+      session.step = STEPS.MENU_PRINCIPAL;
+      return `*Clínica Alemana Osorno* — canales de contacto:\n\n📞 Call center: 600 401 5007\n🌐 Web: https://www.clinicaalemanaosorno.cl/informacion-al-paciente/reserva-hora/\n\nEscribe *menú* para volver al inicio.`;
+    }
+    if (t === "2") {
+      session.step = STEPS.MENU_PRINCIPAL;
+      return `*Clínica Santa María* — canales de contacto:\n\n📞 Call center: +56 2 2913 0000\n💬 WhatsApp: +56 2 2914 2472\n🌐 Web: https://www.clinicasantamaria.cl/reserva-de-horas\n🏥 También puedes ir directamente de forma presencial\n\nEscribe *menú* para volver al inicio.`;
+    }
+    if (t === "3") {
+      session.step = STEPS.MENU_PRINCIPAL;
+      return `*gastroenterologos.cl* — canales de contacto:\n\n📧 info@gastroenterologos.cl\n🌐 https://gastroenterologos.cl/dr-cristian-sandoval-verges/\n\nEscribe *menú* para volver al inicio.`;
+    }
+    if (t === "4") {
+      session.step = STEPS.OTRA_DUDA_MENU;
+      return `¿En qué puedo ayudarte?\n\n1️⃣ Deseo contactarme\n2️⃣ Solicitar sobrecupo\n3️⃣ Cambiar horas\n4️⃣ Consultar perfil Dr. Sandoval`;
+    }
+    return `¿Con cuál institución deseas contactarte?\n\n1️⃣ Clínica Alemana Osorno\n2️⃣ Clínica Santa María\n3️⃣ gastroenterologos.cl\n4️⃣ Volver`;
   }
 
   // ── CONFIRMAR ENVÍO ───────────────────────────────────────

@@ -225,26 +225,30 @@ async function getOpenAIResponse(from, userMessage) {
     let finalUserMessage = userMessage;
 
     if (sedeDetectada) {
-      if (sedeDetectada === "vitacura") {
-        session.data.sede = "Vitacura";
-      }
+  if (sedeDetectada === "vitacura") session.data.sede = "Vitacura";
+  if (sedeDetectada === "los_dominicos") session.data.sede = "Los Dominicos";
+  if (sedeDetectada === "bellavista") session.data.sede = "Bellavista";
 
-      if (sedeDetectada === "los_dominicos") {
-        session.data.sede = "Los Dominicos";
-      }
+  const fechasReales = getAvailableDatesText(sedeDetectada);
 
-      if (sedeDetectada === "bellavista") {
-        session.data.sede = "Bellavista";
-      }
+  const reply = `Perfecto.
 
-      const fechasReales = getAvailableDatesText(sedeDetectada);
+${fechasReales}
 
-      finalUserMessage =
-        userMessage +
-        "\n\n" +
-        fechasReales +
-        "\nResponde mostrando estas opciones de fecha al paciente de forma breve, clara y ordenada.";
-    }
+Indícame el número de la opción que prefieres.`;
+
+  session.messages.push({
+    role: "user",
+    content: userMessage
+  });
+
+  session.messages.push({
+    role: "assistant",
+    content: reply
+  });
+
+  return reply;
+}
 
     finalUserMessage += `
 

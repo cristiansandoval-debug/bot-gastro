@@ -129,8 +129,27 @@ app.get("/webhook", (req, res) => {
 
 function getSession(from) {
   if (!sessions[from]) {
-    sessions[from] = {
-      messages: [
+  sessions[from] = {
+  messages: [
+    {
+      role: "system",
+      content:
+        SYSTEM_PROMPT +
+        "\n\nIMPORTANTE: Si el paciente responde con un número, debes interpretarlo según el último menú mostrado y no según el menú principal. Cuando recibas DATOS REALES CALCULADOS POR BACKEND, debes usar exactamente esas fechas y no inventar otras."
+    }
+  ],
+  data: {
+    nombre: null,
+    rut: null,
+    telefono: null,
+    correo: null,
+    prevision: null,
+    procedimiento: null,
+    sede: null,
+    fechaPreferida: null,
+    ordenMedicaRecibida: false
+  }
+};
         {
           role: "system",
           content:
@@ -145,6 +164,142 @@ function getSession(from) {
 }
 
 async function getOpenAIResponse(from, userMessage) {
+  try {
+    const session = getSession(from);
+
+    const lastAssistantMessage = [...session.messages]
+      .reverse()
+      .find((m) => m.role === "assistant")?.content || "";
+
+    const lowerLast = lastAssistantMessage.toLowerCase();
+    const cleanUser = userMessage.trim();
+
+    // Guardado estructurado real
+    if (lowerLast.includes("nombre completo")) {
+      session.data.nombre = cleanUser;
+    }
+
+    if (lowerLast.includes("rut")) {
+      session.data.rut = cleanUser;
+    }
+
+    if (
+      lowerLast.includes("teléfono") ||
+      lowerLast.includes("telefono")
+    ) {
+      session.data.telefono = cleanUser;
+    }
+
+    if (
+      lowerLast.includes("correo electrónico") ||
+      lowerLast.includes("correo electronico")
+    ) {
+      session.data.correo = cleanUser;
+    }
+
+    if (
+      lowerLast.includes("previsión") ||
+      lowerLast.includes("prevision")
+    ) {
+      session.data.prevision = cleanUser;
+    }
+
+    if (lowerLast.includes("qué procedimiento necesitas")) {
+      if (cleanUser === "1") {
+        session.data.procedimiento = "Endoscopía digestiva alta";
+      }
+      if (cleanUser === "2") {
+        session.data.procedimiento = "Colonoscopía completa";
+      }
+      if (cleanUser === "3") {
+        session.data.procedimiento =
+          "Colonoscopía larga + endoscopía digestiva alta";
+      }
+    }
+
+    const sedeDetectada = detectSedeFromUserChoice(
+      lastAssistantMessage,
+      userMessage
+    );
+
+    let finalUserMessage = userMessage;
+
+    if (sedeDetectada) {
+      if (sedeDetectada === "vitacura") {
+        session.data.sede = "Vitacura";
+      }
+
+      if (sedeDetectada === "los_dominicos") {
+        session.data.sede = "Los Dominicos";
+      }
+
+      if (sedeDetectada === "bellavista") {
+        session.data.sede = "Bellavista";
+      }
+
+      const fechasReales = getAvailableDatesText(sedeDetectada);
+
+      finalUserMessage =
+        userMessage +
+        "\n\n" +
+        fechasReales +
+        "\nResponde mostrando estas opciones de fecha al paciente de forma breve, clara y ordenada.";
+    }
+
+    finalUserMessage += `
+
+DATOS ESTRUCTURADOS DEL PACIENTE:
+${JSON.stringify(session.data, null, 2)}
+
+Usa estos datos reales para cualquier resumen.
+NO uses placeholders.
+`;
+
+    session.messages.push({
+      role: "user",
+      content: finalUserMessage
+    });
+
+    if (session.messages.length > 30) {
+      session.messages = [
+        session.messages[0],
+        ...session.messages.slice(-28)
+      ];
+    }
+
+    const response = await axios.post(
+      "https://api.openai.com/v1/chat/completions",
+      {
+        model: "gpt-4o-mini",
+        messages: session.messages,
+        temperature: 0.2
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${OPENAI_API_KEY}`,
+          "Content-Type": "application/json"
+        }
+      }
+    );
+
+    const reply =
+      response.data.choices[0].message.content;
+
+    session.messages.push({
+      role: "assistant",
+      content: reply
+    });
+
+    return reply;
+  } catch (error) {
+    console.error(
+      "Error OpenAI:",
+      error.response?.data || error.message
+    );
+
+    return "Lo siento, hubo un problema al procesar tu mensaje.";
+  }
+} {
   try {
     const session = getSession(from);
 

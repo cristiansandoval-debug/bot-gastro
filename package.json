@@ -4,6 +4,7 @@
   "main": "app.js",
   "dependencies": {
     "express": "^4.18.2",
-    "axios": "^1.6.8"
+    "axios": "^1.6.8",
+    "googleapis": "^140.0.0"
   }
 }

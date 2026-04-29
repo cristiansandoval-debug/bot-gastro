@@ -333,10 +333,27 @@ app.post("/webhook", async (req, res) => {
 
       console.log("Imagen recibida. Media ID:", imageId);
 
-      const reply = await getOpenAIResponse(
-        from,
-        "El paciente envió una foto de la orden médica. Continúa el flujo: registra que la orden médica fue recibida, muestra el resumen de la solicitud y pregunta si desea enviar la solicitud de agendamiento con opciones numeradas."
-      );
+      const session = getSession(from);
+
+const conversationHistory = session.messages
+  .filter(m => m.role !== "system")
+  .map(m => `${m.role}: ${m.content}`)
+  .join("\n");
+
+const reply = await getOpenAIResponse(
+  from,
+  `El paciente envió una foto de la orden médica.
+
+Usa toda la conversación previa para identificar:
+nombre completo, RUT, teléfono, correo, previsión, procedimiento, sede y fecha preferida.
+
+NO uses placeholders como [Nombre del paciente].
+
+Debes completar el resumen con los datos reales obtenidos desde la conversación.
+
+Conversación previa:
+${conversationHistory}`
+);
 
       await sendWhatsAppMessage(from, reply);
     }

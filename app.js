@@ -41,6 +41,7 @@ IMPORTANTE:
       }
     ],
     data: {
+      step: null,
       nombre: null,
       rut: null,
       telefono: null,
@@ -206,7 +207,7 @@ function makeEmailRaw({ from, to, cc, subject, body }) {
     `From: ${from}`,
     `To: ${to}`,
     cc ? `Cc: ${cc}` : null,
-   `Subject: =?UTF-8?B?${Buffer.from(subject, "utf8").toString("base64")}?=`,
+    `Subject: =?UTF-8?B?${Buffer.from(subject, "utf8").toString("base64")}?=`,
     "Content-Type: text/plain; charset=UTF-8",
     "",
     body
@@ -265,72 +266,81 @@ Solicitud generada desde Bot Procedimientos CSM.`;
 
 async function getOpenAIResponse(from, userMessage) {
   try {
+    const lowerUser = userMessage.toLowerCase();
+
     if (
-      userMessage.toLowerCase().includes("comenzar desde el principio") ||
-      userMessage.toLowerCase().includes("empezar de nuevo")
+      lowerUser.includes("comenzar desde el principio") ||
+      lowerUser.includes("empezar de nuevo")
     ) {
       resetSession(from);
 
-      return "Perfecto. Reiniciamos desde el comienzo.\n\n1. Consulta médica\n2. Procedimientos endoscópicos\n3. Tengo otra duda";
+      return `Perfecto. Reiniciamos desde el comienzo.
+
+1. Consulta médica
+2. Procedimientos endoscópicos
+3. Tengo otra duda`;
     }
 
     const session = getSession(from);
+    const cleanUser = userMessage.trim();
 
     const lastAssistantMessage =
       [...session.messages]
         .reverse()
         .find((m) => m.role === "assistant")?.content || "";
 
-    const lowerLast = lastAssistantMessage.toLowerCase();
-    const cleanUser = userMessage.trim();
+    /* =========================
+       GUARDADO POR STEP (NO por texto)
+    ========================= */
 
-    /* Guardado estructurado */
-
-    if (lowerLast.includes("nombre completo")) {
+    if (session.data.step === "nombre") {
       session.data.nombre = cleanUser;
     }
 
-    if (lowerLast.includes("rut")) {
+    if (session.data.step === "rut") {
       session.data.rut = cleanUser;
     }
 
-    if (
-      lowerLast.includes("teléfono") ||
-      lowerLast.includes("telefono")
-    ) {
+    if (session.data.step === "telefono") {
       session.data.telefono = cleanUser;
     }
 
-    if (
-      lowerLast.includes("correo electrónico") ||
-      lowerLast.includes("correo electronico")
-    ) {
+    if (session.data.step === "correo") {
       session.data.correo = cleanUser;
     }
 
-    if (
-      lowerLast.includes("previsión") ||
-      lowerLast.includes("prevision")
-    ) {
+    if (session.data.step === "prevision") {
       session.data.prevision = cleanUser;
     }
 
-    /* Procedimiento */
+    if (session.data.step === "fecha") {
+      session.data.fechaPreferida = cleanUser;
+    }
+
+    /* =========================
+       PROCEDIMIENTO
+    ========================= */
+
+    const lowerLast = lastAssistantMessage.toLowerCase();
 
     if (lowerLast.includes("qué procedimiento")) {
       if (cleanUser === "1") {
         session.data.procedimiento = "Endoscopía digestiva alta";
       }
+
       if (cleanUser === "2") {
         session.data.procedimiento = "Colonoscopía completa";
       }
+
       if (cleanUser === "3") {
         session.data.procedimiento =
           "Colonoscopía larga + endoscopía digestiva alta";
       }
     }
 
-    /* Sede -> backend directo */
+    /* =========================
+       SEDE → BACKEND DIRECTO
+    ========================= */
 
     const sedeDetectada = detectSede(
       lastAssistantMessage,
@@ -350,6 +360,8 @@ async function getOpenAIResponse(from, userMessage) {
         session.data.sede = "Bellavista";
       }
 
+      session.data.step = "fecha";
+
       const reply = `Perfecto.
 
 ${getAvailableDatesText(sedeDetectada)}
@@ -364,7 +376,9 @@ Indícame el número de la opción que prefieres.`;
       return reply;
     }
 
-    /* Confirmación final + envío real */
+    /* =========================
+       CONFIRMACIÓN FINAL + EMAIL REAL
+    ========================= */
 
     if (
       isFinalConfirmation(lastAssistantMessage) &&
@@ -374,10 +388,12 @@ Indícame el número de la opción que prefieres.`;
 
       await sendGmail({
         to: "contacto@gastroenterologos.cl",
-        cc: `cristian.sandoval@gastroenterologos.cl, ${session.data.correo || ""}`,
-subject: `Nueva solicitud - ${session.data.procedimiento || "Procedimiento"}`
-         body: emailBody
+        cc: `cristian.sandoval@gastroenterologos.cl${session.data.correo ? `, ${session.data.correo}` : ""}`,
+        subject: `Nueva solicitud - ${session.data.procedimiento || "Procedimiento"}`,
+        body: emailBody
       });
+
+      resetSession(from);
 
       return `Tu solicitud fue enviada correctamente.
 
@@ -386,7 +402,9 @@ Recibirás una copia en tu correo electrónico: ${session.data.correo || "-"}
 El equipo humano se pondrá en contacto contigo para confirmar disponibilidad final, presupuesto, preparación y agendamiento definitivo.`;
     }
 
-    /* OpenAI normal */
+    /* =========================
+       OPENAI NORMAL
+    ========================= */
 
     const finalUserMessage = `${cleanUser}
 
@@ -425,6 +443,41 @@ NO uses placeholders.`;
 
     const reply =
       response.data.choices[0].message.content;
+
+    /* =========================
+       DETECCIÓN DE STEP DESDE RESPUESTA
+    ========================= */
+
+    const lowerReply = reply.toLowerCase();
+
+    if (lowerReply.includes("nombre completo")) {
+      session.data.step = "nombre";
+    }
+
+    else if (lowerReply.includes("rut")) {
+      session.data.step = "rut";
+    }
+
+    else if (
+      lowerReply.includes("teléfono") ||
+      lowerReply.includes("telefono")
+    ) {
+      session.data.step = "telefono";
+    }
+
+    else if (
+      lowerReply.includes("correo electrónico") ||
+      lowerReply.includes("correo electronico")
+    ) {
+      session.data.step = "correo";
+    }
+
+    else if (
+      lowerReply.includes("previsión") ||
+      lowerReply.includes("prevision")
+    ) {
+      session.data.step = "prevision";
+    }
 
     session.messages.push({
       role: "assistant",
@@ -522,6 +575,7 @@ app.post("/webhook", async (req, res) => {
       const reply = await getOpenAIResponse(
         from,
         `El paciente envió la foto de la orden médica. Genera el resumen final y pregunta:
+
 1. Sí, enviar
 2. No`
       );

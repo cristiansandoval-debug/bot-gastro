@@ -134,12 +134,13 @@ function formatearTelefono(raw) {
   return null;
 }
 
-// Calcula los próximos N días de la semana (0=domingo, 1=lunes... 3=miércoles, 2=martes)
-function proximosDias(diaNombre, cantidad = 4) {
+// Calcula los próximos N días de la semana, devuelve {label, fecha}
+function proximosDias(diaNombre, cantidad = 4, sedeKey = "los_dominicos") {
   const diasMap = {
     domingo: 0, lunes: 1, martes: 2, miercoles: 3, miércoles: 3,
     jueves: 4, viernes: 5, sabado: 6, sábado: 6
   };
+  const nombresCapitalizados = ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
   const diaNum = diasMap[diaNombre.toLowerCase()];
   const hoy = new Date();
   const fechas = [];
@@ -148,15 +149,62 @@ function proximosDias(diaNombre, cantidad = 4) {
   while (fechas.length < cantidad) {
     fecha.setDate(fecha.getDate() + 1);
     if (fecha.getDay() === diaNum) {
-      fechas.push(new Date(fecha));
+      const d = fecha.getDate().toString().padStart(2, "0");
+      const m = (fecha.getMonth() + 1).toString().padStart(2, "0");
+      const y = fecha.getFullYear();
+      fechas.push({
+        label: `${nombresCapitalizados[fecha.getDay()]} ${d}/${m}/${y} ${etiquetaHorario(sedeKey)}`,
+        fecha: `${d}/${m}/${y}`
+      });
     }
   }
+  return fechas;
+}
 
-  return fechas.map(f => {
-    const d = f.getDate().toString().padStart(2, "0");
-    const m = (f.getMonth() + 1).toString().padStart(2, "0");
-    const y = f.getFullYear();
-    return `${d}/${m}/${y}`;
+// Devuelve etiqueta de horario según sede
+function etiquetaHorario(sedeKey) {
+  if (sedeKey === "bellavista") return "_(tarde)_";
+  return "_(mañana)_";
+}
+function todasLasFechas30Dias(sedesKeys) {
+  const diasMap = {
+    domingo: 0, lunes: 1, martes: 2, miercoles: 3, miércoles: 3,
+    jueves: 4, viernes: 5, sabado: 6, sábado: 6
+  };
+  const nombresCapitalizados = ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
+  const hoy = new Date();
+  const limite = new Date(hoy);
+  limite.setDate(limite.getDate() + 30);
+
+  const resultados = [];
+  let fecha = new Date(hoy);
+  fecha.setDate(fecha.getDate() + 1);
+
+  while (fecha <= limite) {
+    for (const sedeKey of sedesKeys) {
+      const info = DISPONIBILIDAD_BASE[sedeKey];
+      if (!info) continue;
+      const diaNum = diasMap[info.dia.toLowerCase()];
+      if (fecha.getDay() === diaNum) {
+        const d = fecha.getDate().toString().padStart(2, "0");
+        const m = (fecha.getMonth() + 1).toString().padStart(2, "0");
+        const y = fecha.getFullYear();
+        resultados.push({
+          label: `${nombresCapitalizados[fecha.getDay()]} ${d}/${m}/${y} — ${nombreSede(sedeKey)} ${etiquetaHorario(sedeKey)}`,
+          fecha: `${d}/${m}/${y}`,
+          sede: nombreSede(sedeKey),
+          sedeKey
+        });
+      }
+    }
+    fecha.setDate(fecha.getDate() + 1);
+  }
+
+  // Ordenar por fecha
+  return resultados.sort((a, b) => {
+    const [da, ma, ya] = a.fecha.split("/").map(Number);
+    const [db, mb, yb] = b.fecha.split("/").map(Number);
+    return new Date(ya, ma-1, da) - new Date(yb, mb-1, db);
   });
 }
 
@@ -261,7 +309,7 @@ async function getGmailAccessToken() {
 }
 
 function buildEmailBody(data) {
-  return `Nueva solicitud de procedimiento endoscópico
+  return `Nueva solicitud de procedimiento endoscópico — Dr. Cristián Sandoval Vergés
 ${"=".repeat(50)}
 
 DATOS DEL PACIENTE
@@ -292,7 +340,7 @@ Debe ser revisada y confirmada por el equipo humano correspondiente.`;
 function buildRawEmail({ from, to, cc, bcc, subject, body, attachment }) {
   const boundary = `boundary_${Date.now()}`;
   const headers = [
-    `From: No Reply Gastroenterologos.cl <${from}>`,
+    `From: Asistente Dr. Sandoval (No Reply) <${from}>`,
     `To: ${to}`,
     cc  ? `Cc: ${cc}`   : null,
     bcc ? `Bcc: ${bcc}` : null,
@@ -325,7 +373,7 @@ async function sendSolicitudEmail(session) {
     to:         DESTINATION_EMAIL,
     cc:         session.data.correo || undefined,
     bcc:        INTERNAL_BCC_EMAIL,
-    subject:    `Nueva solicitud - ${session.data.procedimiento || "Procedimiento"} - ${session.data.nombre || "Paciente"}`,
+    subject:    `Solicitud procedimiento con Dr. Sandoval - ${session.data.procedimiento || "Procedimiento"} - ${session.data.nombre || "Paciente"}`,
     body:       buildEmailBody(session.data),
     attachment: session.data.ordenMedicaBuffer
       ? { buffer: session.data.ordenMedicaBuffer, mimeType: session.data.ordenMedicaMimeType }
@@ -437,7 +485,11 @@ Esta modalidad es externa a Clínica Santa María.
 }
 
 function msgTipoProcedimiento() {
-  return `¿Qué procedimiento necesitas?
+  return `Te ayudaremos a encontrar una fecha disponible para iniciar tu *solicitud de agendamiento*.
+
+_Ten en cuenta que esto no constituye un agendamiento definitivo. El equipo humano confirmará disponibilidad, presupuesto y preparación una vez recibida tu solicitud._
+
+¿Qué procedimiento necesitas?
 
 1️⃣ Endoscopía digestiva alta
 2️⃣ Colonoscopía completa
@@ -460,7 +512,9 @@ function msgTieneOrden() {
   return `¿Tienes *orden médica* para el procedimiento?
 
 1️⃣ Sí
-2️⃣ No`;
+2️⃣ No
+
+_Te recomendamos tener tu orden a mano, ya que más adelante deberás fotografiarla o adjuntarla para completar tu solicitud._`;
 }
 
 function msgSinOrden() {
@@ -479,7 +533,7 @@ function msgSedeProcedimiento(sedesDisponibles) {
     const info = DISPONIBILIDAD_BASE[s];
     return `${i + 1}️⃣ ${nombreSede(s)} → ${info.dia} ${info.horario}`;
   });
-  opciones.push(`${sedesDisponibles.length + 1}️⃣ Cualquiera`);
+  opciones.push(`${sedesDisponibles.length + 1}️⃣ Ver todos los días disponibles (próximos 30 días)`);
 
   return `¿En qué sede prefieres el procedimiento?\n\n${opciones.join("\n")}`;
 }
@@ -488,7 +542,7 @@ async function msgFechas(sede) {
   const info = DISPONIBILIDAD_BASE[sede];
   if (!info) return "No hay disponibilidad base para esa sede.";
 
-  const fechasBase = proximosDias(info.dia, 4);
+  const fechas = proximosDias(info.dia, 4, sede);
 
   // Intentar cruzar con Google Sheet
   let notaSheet = "";
@@ -497,15 +551,23 @@ async function msgFechas(sede) {
     notaSheet = "\n\n_Disponibilidad confirmada según agenda actualizada._";
   }
 
-  const opciones = fechasBase.map((f, i) => `${i + 1}️⃣ ${f}`).join("\n");
+  const opciones = fechas.map((f, i) => `${i + 1}️⃣ ${f.label}`).join("\n");
 
-  return `Estas son las próximas fechas disponibles en *${nombreSede(sede)}* (${info.dia}):
+  return `Estas son las próximas fechas disponibles en *${nombreSede(sede)}*:
 
 ${opciones}
-5️⃣ Otra fecha
-6️⃣ Cualquiera${notaSheet}
+5️⃣ Otra fecha${notaSheet}
 
 Elige una opción:`;
+}
+
+function msgTodasLasFechas(sedesKeys) {
+  const fechas = todasLasFechas30Dias(sedesKeys);
+  if (fechas.length === 0) return "No hay fechas disponibles en los próximos 30 días.";
+
+  const opciones = fechas.map((f, i) => `${i + 1}️⃣ ${f.label}`).join("\n");
+
+  return `Fechas disponibles en los *próximos 30 días*:\n\n${opciones}\n\nElige una opción:`;
 }
 
 function msgResumenFinal(data) {
@@ -693,9 +755,9 @@ async function procesarMensaje(from, text, session) {
 
   // ── PREVISIÓN ────────────────────────────────────────────
   if (session.step === STEPS.PREVISION) {
-    if (t === "1") { session.data.prevision = "Fonasa";    session.step = STEPS.SEDE_PROCEDIMIENTO; }
+    if (t === "1") { session.data.prevision = "Fonasa"; session.step = STEPS.LATEX; }
     else if (t === "2") { session.data.prevision = "Isapre"; session.step = STEPS.ISAPRE; }
-    else if (t === "3") { session.data.prevision = "Particular"; session.step = STEPS.SEDE_PROCEDIMIENTO; }
+    else if (t === "3") { session.data.prevision = "Particular"; session.step = STEPS.LATEX; }
     else return `¿Cuál es tu *previsión*?\n\n1️⃣ Fonasa\n2️⃣ Isapre\n3️⃣ Particular`;
 
     if (session.step === STEPS.ISAPRE) {
@@ -711,9 +773,7 @@ async function procesarMensaje(from, text, session) {
 8️⃣ Fundación
 9️⃣ Otra`;
     }
-
-    // Si no es Isapre, ir directo a sede
-    return msgSedeProcedimiento(SEDES_POR_PROCEDIMIENTO[session.data.procedimientoKey] || Object.keys(DISPONIBILIDAD_BASE));
+    return `¿Eres *alérgico al látex*?\n\n1️⃣ Sí\n2️⃣ No`;
   }
 
   // ── ISAPRE ───────────────────────────────────────────────
@@ -721,29 +781,36 @@ async function procesarMensaje(from, text, session) {
     const isapres = { "1":"Banmédica","2":"Colmena","3":"Consalud","4":"Cruz Blanca","5":"Nueva Masvida","6":"Vida Tres","7":"Esencial","8":"Fundación","9":"Otra" };
     if (isapres[t]) {
       session.data.isapre = isapres[t];
-      session.step = STEPS.SEDE_PROCEDIMIENTO;
-      const sedes = SEDES_POR_PROCEDIMIENTO[session.data.procedimientoKey] || Object.keys(DISPONIBILIDAD_BASE);
-      return msgSedeProcedimiento(sedes);
+      session.step = STEPS.LATEX;
+      return `¿Eres *alérgico al látex*?\n\n1️⃣ Sí\n2️⃣ No`;
     }
     return `Selecciona tu Isapre (1-9):`;
   }
 
   // ── SEDE PROCEDIMIENTO ───────────────────────────────────
   if (session.step === STEPS.SEDE_PROCEDIMIENTO) {
-    const sedes = SEDES_POR_PROCEDIMIENTO[session.data.procedimientoKey] || Object.keys(DISPONIBILIDAD_BASE);
-    const cualquieraIdx = (sedes.length + 1).toString();
+    let sedes = SEDES_POR_PROCEDIMIENTO[session.data.procedimientoKey] || Object.keys(DISPONIBILIDAD_BASE);
 
-    if (t === cualquieraIdx) {
+    // Si tiene marcapasos, excluir Vitacura
+    if (session.data.marcapasos === "Sí") {
+      sedes = sedes.filter(s => s !== "vitacura");
+    }
+
+    const verTodosIdx = (sedes.length + 1).toString();
+
+    if (t === verTodosIdx) {
       session.data.sede = "Cualquiera";
-      session.data.sedeKey = "los_dominicos"; // Para calcular fechas, usar primera opción
+      session.data.sedeKey = "todas";
+      session.data.sedesDisponibles = sedes;
       session.step = STEPS.FECHA;
-      return await msgFechas("los_dominicos");
+      return msgTodasLasFechas(sedes);
     }
 
     const idx = parseInt(t) - 1;
     if (idx >= 0 && idx < sedes.length) {
       session.data.sedeKey = sedes[idx];
       session.data.sede = nombreSede(sedes[idx]);
+      session.data.sedesDisponibles = [sedes[idx]];
       session.step = STEPS.FECHA;
       return await msgFechas(sedes[idx]);
     }
@@ -753,32 +820,44 @@ async function procesarMensaje(from, text, session) {
 
   // ── FECHA ────────────────────────────────────────────────
   if (session.step === STEPS.FECHA) {
-    const sedeKey = session.data.sedeKey || "los_dominicos";
-    const fechasBase = proximosDias(DISPONIBILIDAD_BASE[sedeKey]?.dia || "lunes", 4);
-    const cualquieraIdx = "6";
-    const otraIdx = "5";
+    const sedeKey = session.data.sedeKey;
+    const esTodasLasSedes = sedeKey === "todas";
+    const sedes = session.data.sedesDisponibles || [sedeKey];
 
-    if (t === cualquieraIdx) {
-      session.data.fechaPreferida = "Cualquiera";
-    } else if (t === otraIdx) {
-      session.data.fechaPreferida = "A coordinar";
-    } else {
+    if (esTodasLasSedes) {
+      // Modo "ver todos los días" — lista completa de 30 días
+      const fechas = todasLasFechas30Dias(sedes);
       const idx = parseInt(t) - 1;
-      if (idx >= 0 && idx < fechasBase.length) {
-        session.data.fechaPreferida = fechasBase[idx];
+      if (idx >= 0 && idx < fechas.length) {
+        session.data.fechaPreferida = `${fechas[idx].label}`;
+        session.data.sede = fechas[idx].sede;
       } else if (text.trim().length >= 8) {
-        // Acepta fecha escrita manualmente
         session.data.fechaPreferida = text.trim();
       } else {
-        return await msgFechas(sedeKey);
+        return msgTodasLasFechas(sedes);
+      }
+    } else {
+      // Modo sede específica — próximas 4 fechas
+      const fechas = proximosDias(DISPONIBILIDAD_BASE[sedeKey]?.dia || "lunes", 4, sedeKey);
+      const otraIdx = "5";
+
+      if (t === otraIdx) {
+        session.data.fechaPreferida = "A coordinar";
+      } else {
+        const idx = parseInt(t) - 1;
+        if (idx >= 0 && idx < fechas.length) {
+          session.data.fechaPreferida = fechas[idx].label;
+        } else if (text.trim().length >= 8) {
+          session.data.fechaPreferida = text.trim();
+        } else {
+          return await msgFechas(sedeKey);
+        }
       }
     }
 
-    session.step = STEPS.LATEX;
-    return `¿Eres *alérgico al látex*?\n\n1️⃣ Sí\n2️⃣ No`;
+    session.step = STEPS.ESPERANDO_ORDEN_FOTO;
+    return `Por favor, envía una *foto clara de tu orden médica* 📷\n\n_La imagen se adjuntará a tu solicitud como respaldo._`;
   }
-
-  // ── PREGUNTAS CLÍNICAS ───────────────────────────────────
   if (session.step === STEPS.LATEX) {
     if (t === "1") { session.data.latex = "Sí"; session.step = STEPS.ANTICOAGULANTES; }
     else if (t === "2") { session.data.latex = "No"; session.step = STEPS.ANTICOAGULANTES; }
@@ -804,8 +883,14 @@ async function procesarMensaje(from, text, session) {
     if (t === "1") { session.data.marcapasos = "Sí"; }
     else if (t === "2") { session.data.marcapasos = "No"; }
     else return `¿Tienes *marcapasos*?\n\n1️⃣ Sí\n2️⃣ No`;
-    session.step = STEPS.ESPERANDO_ORDEN_FOTO;
-    return `Por favor, envía una *foto clara de tu orden médica* 📷\n\n_La imagen se adjuntará a tu solicitud como respaldo._`;
+
+    // Ahora sí podemos filtrar sedes con info de marcapasos
+    session.step = STEPS.SEDE_PROCEDIMIENTO;
+    let sedes = SEDES_POR_PROCEDIMIENTO[session.data.procedimientoKey] || Object.keys(DISPONIBILIDAD_BASE);
+    if (session.data.marcapasos === "Sí") {
+      sedes = sedes.filter(s => s !== "vitacura");
+    }
+    return msgSedeProcedimiento(sedes);
   }
 
   // ── OTRA DUDA - MENÚ ─────────────────────────────────────

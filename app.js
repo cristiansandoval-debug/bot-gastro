@@ -10,33 +10,34 @@ const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT;
 
-const sessions = {};
-const SESSION_TIMEOUT_MS = 12 * 60 * 60 * 1000; // 12 horas
+const GMAIL_CLIENT_ID = process.env.GMAIL_CLIENT_ID;
+const GMAIL_CLIENT_SECRET = process.env.GMAIL_CLIENT_SECRET;
+const GMAIL_REFRESH_TOKEN = process.env.GMAIL_REFRESH_TOKEN;
+const GMAIL_USER = process.env.GMAIL_USER;
 
-function shouldResetSession(text) {
-  const clean = text.toLowerCase().trim();
-  return [
-    "reiniciar",
-    "reinicia",
-    "comenzar de nuevo",
-    "empezar de nuevo",
-    "nuevo agendamiento",
-    "partir de nuevo",
-    "volver al inicio",
-    "inicio",
-    "reset"
-  ].some((phrase) => clean.includes(phrase));
-}
+const sessions = {};
+const SESSION_TIMEOUT_HOURS = 12;
+
+/* =========================
+   SESIONES
+========================= */
 
 function createNewSession() {
   return {
-    lastInteraction: Date.now(),
+    lastActivity: Date.now(),
     messages: [
       {
         role: "system",
         content:
           SYSTEM_PROMPT +
-          "\n\nIMPORTANTE: Si el paciente responde con un número, debes interpretarlo según el último menú mostrado."
+          `
+
+IMPORTANTE:
+- Si el paciente responde con un número, debes interpretarlo según el último menú mostrado.
+- NO uses placeholders como [Nombre], [RUT], etc.
+- Usa siempre los datos reales guardados.
+- Si el paciente pide comenzar nuevamente, reinicia completamente el flujo.
+`
       }
     ],
     data: {
@@ -47,36 +48,39 @@ function createNewSession() {
       prevision: null,
       procedimiento: null,
       sede: null,
-      fechaPreferida: null,
-      ordenMedicaRecibida: false
+      fechaPreferida: null
     }
   };
 }
 
 function getSession(from) {
-  const existing = sessions[from];
+  const now = Date.now();
 
-  if (!existing) {
+  if (!sessions[from]) {
     sessions[from] = createNewSession();
     return sessions[from];
   }
 
-  const inactiveTooLong =
-    Date.now() - existing.lastInteraction > SESSION_TIMEOUT_MS;
+  const diffHours =
+    (now - sessions[from].lastActivity) / (1000 * 60 * 60);
 
-  if (inactiveTooLong) {
+  if (diffHours >= SESSION_TIMEOUT_HOURS) {
     sessions[from] = createNewSession();
-    return sessions[from];
   }
 
-  existing.lastInteraction = Date.now();
-  return existing;
+  sessions[from].lastActivity = now;
+
+  return sessions[from];
 }
 
 function resetSession(from) {
   sessions[from] = createNewSession();
   return sessions[from];
 }
+
+/* =========================
+   FECHAS
+========================= */
 
 function getNextDatesByWeekday(targetWeekday, count = 4) {
   const dates = [];
@@ -135,12 +139,16 @@ Fechas disponibles para orientar la solicitud:
 7. Atrás`;
 }
 
+/* =========================
+   DETECTORES
+========================= */
+
 function detectSede(lastAssistantMessage, userText) {
   if (!lastAssistantMessage) return null;
 
   const lower = lastAssistantMessage.toLowerCase();
 
-  if (!lower.includes("sede preferida")) return null;
+  if (!lower.includes("sede")) return null;
 
   if (
     lower.includes("vitacura") &&
@@ -164,21 +172,106 @@ function detectSede(lastAssistantMessage, userText) {
   return null;
 }
 
+function isFinalConfirmation(lastAssistantMessage) {
+  if (!lastAssistantMessage) return false;
+
+  const lower = lastAssistantMessage.toLowerCase();
+
+  return (
+    lower.includes("¿está seguro que desea enviar") ||
+    lower.includes("esta seguro que desea enviar")
+  );
+}
+
+/* =========================
+   GMAIL API
+========================= */
+
+async function getGmailAccessToken() {
+  const response = await axios.post(
+    "https://oauth2.googleapis.com/token",
+    {
+      client_id: GMAIL_CLIENT_ID,
+      client_secret: GMAIL_CLIENT_SECRET,
+      refresh_token: GMAIL_REFRESH_TOKEN,
+      grant_type: "refresh_token"
+    }
+  );
+
+  return response.data.access_token;
+}
+
+function makeEmailRaw({ from, to, cc, subject, body }) {
+  const email = [
+    `From: ${from}`,
+    `To: ${to}`,
+    cc ? `Cc: ${cc}` : null,
+    `Subject: ${subject}`,
+    "Content-Type: text/plain; charset=UTF-8",
+    "",
+    body
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return Buffer.from(email)
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
+async function sendGmail({ to, cc, subject, body }) {
+  const accessToken = await getGmailAccessToken();
+
+  const raw = makeEmailRaw({
+    from: GMAIL_USER,
+    to,
+    cc,
+    subject,
+    body
+  });
+
+  await axios.post(
+    "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+    { raw },
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json"
+      }
+    }
+  );
+}
+
+function buildEmailBody(data) {
+  return `Nueva solicitud de procedimiento endoscópico
+
+Nombre completo: ${data.nombre || "-"}
+RUT: ${data.rut || "-"}
+Teléfono: ${data.telefono || "-"}
+Correo: ${data.correo || "-"}
+Previsión: ${data.prevision || "-"}
+Procedimiento: ${data.procedimiento || "-"}
+Sede: ${data.sede || "-"}
+Fecha preferida: ${data.fechaPreferida || "-"}
+
+Solicitud generada desde Bot Procedimientos CSM.`;
+}
+
+/* =========================
+   OPENAI
+========================= */
+
 async function getOpenAIResponse(from, userMessage) {
   try {
-    if (shouldResetSession(userMessage)) {
+    if (
+      userMessage.toLowerCase().includes("comenzar desde el principio") ||
+      userMessage.toLowerCase().includes("empezar de nuevo")
+    ) {
       resetSession(from);
-      return `Perfecto, comenzamos desde el inicio.
 
-Hola, soy el asistente virtual del Dr. Cristián Sandoval Vergés – Gastroenterólogo.
-
-Te ayudaré a orientar tu solicitud.
-
-Indícame qué necesitas:
-
-1. Consulta médica
-2. Procedimientos endoscópicos
-3. Tengo otra duda`;
+      return "Perfecto. Reiniciamos desde el comienzo.\n\n1. Consulta médica\n2. Procedimientos endoscópicos\n3. Tengo otra duda";
     }
 
     const session = getSession(from);
@@ -190,6 +283,8 @@ Indícame qué necesitas:
 
     const lowerLast = lastAssistantMessage.toLowerCase();
     const cleanUser = userMessage.trim();
+
+    /* Guardado estructurado */
 
     if (lowerLast.includes("nombre completo")) {
       session.data.nombre = cleanUser;
@@ -220,21 +315,40 @@ Indícame qué necesitas:
       session.data.prevision = cleanUser;
     }
 
-    if (lowerLast.includes("qué procedimiento necesitas")) {
-      if (cleanUser === "1") session.data.procedimiento = "Endoscopía digestiva alta";
-      if (cleanUser === "2") session.data.procedimiento = "Colonoscopía completa";
+    /* Procedimiento */
+
+    if (lowerLast.includes("qué procedimiento")) {
+      if (cleanUser === "1") {
+        session.data.procedimiento = "Endoscopía digestiva alta";
+      }
+      if (cleanUser === "2") {
+        session.data.procedimiento = "Colonoscopía completa";
+      }
       if (cleanUser === "3") {
         session.data.procedimiento =
           "Colonoscopía larga + endoscopía digestiva alta";
       }
     }
 
-    const sedeDetectada = detectSede(lastAssistantMessage, cleanUser);
+    /* Sede -> backend directo */
+
+    const sedeDetectada = detectSede(
+      lastAssistantMessage,
+      cleanUser
+    );
 
     if (sedeDetectada) {
-      if (sedeDetectada === "vitacura") session.data.sede = "Vitacura";
-      if (sedeDetectada === "los_dominicos") session.data.sede = "Los Dominicos";
-      if (sedeDetectada === "bellavista") session.data.sede = "Bellavista";
+      if (sedeDetectada === "vitacura") {
+        session.data.sede = "Vitacura";
+      }
+
+      if (sedeDetectada === "los_dominicos") {
+        session.data.sede = "Los Dominicos";
+      }
+
+      if (sedeDetectada === "bellavista") {
+        session.data.sede = "Bellavista";
+      }
 
       const reply = `Perfecto.
 
@@ -242,11 +356,37 @@ ${getAvailableDatesText(sedeDetectada)}
 
 Indícame el número de la opción que prefieres.`;
 
-      session.messages.push({ role: "user", content: cleanUser });
-      session.messages.push({ role: "assistant", content: reply });
+      session.messages.push({
+        role: "assistant",
+        content: reply
+      });
 
       return reply;
     }
+
+    /* Confirmación final + envío real */
+
+    if (
+      isFinalConfirmation(lastAssistantMessage) &&
+      cleanUser === "1"
+    ) {
+      const emailBody = buildEmailBody(session.data);
+
+      await sendGmail({
+        to: "contacto@gastroenterologos.cl",
+        cc: `cristian.sandoval@gastroenterologos.cl, ${session.data.correo || ""}`,
+        subject: `Nueva solicitud - ${session.data.procedimiento || "Procedimiento"}`,
+        body: emailBody
+      });
+
+      return `Tu solicitud fue enviada correctamente.
+
+Recibirás una copia en tu correo electrónico: ${session.data.correo || "-"}
+
+El equipo humano se pondrá en contacto contigo para confirmar disponibilidad final, presupuesto, preparación y agendamiento definitivo.`;
+    }
+
+    /* OpenAI normal */
 
     const finalUserMessage = `${cleanUser}
 
@@ -283,7 +423,8 @@ NO uses placeholders.`;
       }
     );
 
-    const reply = response.data.choices[0].message.content;
+    const reply =
+      response.data.choices[0].message.content;
 
     session.messages.push({
       role: "assistant",
@@ -297,9 +438,13 @@ NO uses placeholders.`;
       error.response?.data || error.message
     );
 
-    return "Lo siento, hubo un problema al procesar tu mensaje.";
+    return "Lo siento, hubo un problema al procesar tu solicitud.";
   }
 }
+
+/* =========================
+   WHATSAPP
+========================= */
 
 async function sendWhatsAppMessage(to, message) {
   try {
@@ -326,6 +471,10 @@ async function sendWhatsAppMessage(to, message) {
     );
   }
 }
+
+/* =========================
+   ROUTES
+========================= */
 
 app.get("/", (req, res) => {
   res.status(200).send("Bot Gastro activo");
@@ -359,7 +508,10 @@ app.post("/webhook", async (req, res) => {
 
       console.log("Mensaje recibido:", userText);
 
-      const reply = await getOpenAIResponse(from, userText);
+      const reply = await getOpenAIResponse(
+        from,
+        userText
+      );
 
       await sendWhatsAppMessage(from, reply);
     }
@@ -367,13 +519,9 @@ app.post("/webhook", async (req, res) => {
     if (message.type === "image") {
       console.log("Imagen recibida");
 
-      const session = getSession(from);
-      session.data.ordenMedicaRecibida = true;
-
       const reply = await getOpenAIResponse(
         from,
-        `El paciente envió la foto de la orden médica.
-Genera el resumen final usando los datos estructurados guardados y pregunta:
+        `El paciente envió la foto de la orden médica. Genera el resumen final y pregunta:
 1. Sí, enviar
 2. No`
       );

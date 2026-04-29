@@ -2,235 +2,426 @@ const express = require("express");
 const axios = require("axios");
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: "20mb" }));
 
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT;
 
 const GMAIL_CLIENT_ID = process.env.GMAIL_CLIENT_ID;
 const GMAIL_CLIENT_SECRET = process.env.GMAIL_CLIENT_SECRET;
 const GMAIL_REFRESH_TOKEN = process.env.GMAIL_REFRESH_TOKEN;
 const GMAIL_USER = process.env.GMAIL_USER;
 
+const TEST_DESTINATION_EMAIL = "contacto@gastroenterologos.cl";
+const INTERNAL_BCC_EMAIL = "cristian.sandoval@gastroenterologos.cl";
+const SESSION_TIMEOUT_MS = 12 * 60 * 60 * 1000;
+
 const sessions = {};
-const SESSION_TIMEOUT_HOURS = 12;
 
-/* =========================
-   SESIONES
-========================= */
-
-function createNewSession() {
+function newSession() {
   return {
     lastActivity: Date.now(),
-    messages: [
-      {
-        role: "system",
-        content:
-          SYSTEM_PROMPT +
-          `
-
-IMPORTANTE:
-- Si el paciente responde con un número, debes interpretarlo según el último menú mostrado.
-- NO uses placeholders como [Nombre], [RUT], etc.
-- Usa siempre los datos reales guardados.
-- Si el paciente pide comenzar nuevamente, reinicia completamente el flujo.
-`
-      }
-    ],
+    step: "main_menu",
+    dates: [],
     data: {
-      step: null,
+      flujo: null,
+      procedimiento: null,
+      ordenMedica: null,
       nombre: null,
       rut: null,
       telefono: null,
       correo: null,
       prevision: null,
-      procedimiento: null,
+      isapre: null,
       sede: null,
-      fechaPreferida: null
+      fechaPreferida: null,
+      latex: null,
+      anticoagulantes: null,
+      glp1: null,
+      marcapasos: null,
+      ordenMedicaMediaId: null,
+      ordenMedicaBuffer: null,
+      ordenMedicaMimeType: null
     }
   };
 }
 
 function getSession(from) {
   const now = Date.now();
+  if (!sessions[from]) sessions[from] = newSession();
 
-  if (!sessions[from]) {
-    sessions[from] = createNewSession();
-    return sessions[from];
-  }
-
-  const diffHours =
-    (now - sessions[from].lastActivity) / (1000 * 60 * 60);
-
-  if (diffHours >= SESSION_TIMEOUT_HOURS) {
-    sessions[from] = createNewSession();
+  if (now - sessions[from].lastActivity > SESSION_TIMEOUT_MS) {
+    sessions[from] = newSession();
   }
 
   sessions[from].lastActivity = now;
-
   return sessions[from];
 }
 
 function resetSession(from) {
-  sessions[from] = createNewSession();
+  sessions[from] = newSession();
   return sessions[from];
 }
 
-/* =========================
-   FECHAS
-========================= */
+function isResetCommand(text) {
+  const t = (text || "").toLowerCase().trim();
+  return [
+    "reiniciar",
+    "reset",
+    "comenzar de nuevo",
+    "empezar de nuevo",
+    "volver al inicio",
+    "inicio",
+    "partir de nuevo",
+    "nuevo agendamiento"
+  ].some(x => t.includes(x));
+}
+
+function onlyNumber(text) {
+  return (text || "").trim();
+}
+
+function invalidOption(valid) {
+  return `Por favor, responde solo con el número de una de las opciones: ${valid.join(", ")}.`;
+}
+
+function mainMenu() {
+  return `Hola, soy el asistente virtual del Dr. Cristián Sandoval Vergés – Gastroenterólogo.
+
+Te ayudaré a orientar tu solicitud.
+
+Indícame qué necesitas:
+
+1. Consulta médica
+2. Procedimientos endoscópicos
+3. Tengo otra duda`;
+}
+
+function consultasMenu() {
+  return `¿Prefieres agendar tu consulta en:
+
+1. Clínica Alemana Osorno (presencial)
+2. Clínica Santa María (presencial)
+3. gastroenterologos.cl (telemedicina)
+4. Atrás`;
+}
+
+function procedimientosMenu() {
+  return `¿Qué procedimiento necesitas?
+
+1. Endoscopía digestiva alta
+2. Colonoscopía completa
+3. Colonoscopía larga + endoscopía digestiva alta
+4. Otros
+5. Atrás`;
+}
+
+function otrosMenu() {
+  return `¿Qué procedimiento necesitas?
+
+1. Polipectomía baja
+2. Polipectomía alta
+3. Colonoscopía corta
+4. Ligadura de várices
+5. Terapia argón plasma
+6. Atrás`;
+}
+
+function ordenMedicaPregunta() {
+  return `¿Tienes orden médica para el procedimiento?
+
+1. Sí
+2. No`;
+}
+
+function noOrdenMedicaMenu() {
+  return `Para realizar el procedimiento generalmente se requiere evaluación médica previa y orden correspondiente.
+
+Puedes agendar una consulta en:
+
+1. Clínica Alemana Osorno (presencial)
+2. Clínica Santa María (presencial)
+3. gastroenterologos.cl (telemedicina)
+4. Agendaré después cuando tenga mi orden médica`;
+}
+
+function previsionMenu() {
+  return `Indícame tu previsión:
+
+1. Fonasa
+2. Isapre
+3. Particular`;
+}
+
+function isapreMenu() {
+  return `Selecciona tu Isapre:
+
+1. Banmédica
+2. Colmena
+3. Consalud
+4. Cruz Blanca
+5. Nueva Masvida
+6. Vida Tres
+7. Esencial
+8. Otra`;
+}
+
+function sedeMenu(data) {
+  if (data.procedimiento === "Endoscopía digestiva alta") {
+    return `¿Qué sede prefieres?
+
+1. Vitacura
+2. Los Dominicos
+3. Bellavista
+4. Cualquiera
+5. Atrás
+
+Horario base:
+Vitacura → martes 08:30 a 12:00
+Los Dominicos → lunes 08:30 a 13:00
+Bellavista → miércoles 14:00 a 19:00`;
+  }
+
+  return `¿Qué sede prefieres?
+
+1. Los Dominicos
+2. Bellavista
+3. Cualquiera
+4. Atrás
+
+Horario base:
+Los Dominicos → lunes 08:30 a 13:00
+Bellavista → miércoles 14:00 a 19:00`;
+}
 
 function getNextDatesByWeekday(targetWeekday, count = 4) {
   const dates = [];
   const today = new Date();
   today.setHours(12, 0, 0, 0);
 
-  let date = new Date(today);
-
+  const d = new Date(today);
   while (dates.length < count) {
-    if (date.getDay() === targetWeekday && date >= today) {
-      dates.push(
-        date.toLocaleDateString("es-CL", {
-          weekday: "long",
-          day: "2-digit",
-          month: "long",
-          year: "numeric"
-        })
-      );
+    if (d.getDay() === targetWeekday) {
+      dates.push(new Date(d));
     }
-
-    date.setDate(date.getDate() + 1);
+    d.setDate(d.getDate() + 1);
   }
-
   return dates;
 }
 
-function getAvailableDatesText(sede) {
-  let weekday;
-  let horario;
+function formatDateCL(date) {
+  return date.toLocaleDateString("es-CL", {
+    weekday: "long",
+    day: "2-digit",
+    month: "long",
+    year: "numeric"
+  });
+}
 
-  if (sede === "vitacura") {
-    weekday = 2;
-    horario = "martes 08:30 a 12:00";
-  } else if (sede === "los_dominicos") {
-    weekday = 1;
-    horario = "lunes 08:30 a 13:00";
-  } else if (sede === "bellavista") {
-    weekday = 3;
-    horario = "miércoles 14:00 a 19:00";
-  } else {
-    return "";
+function weekdayForSede(sede) {
+  if (sede === "Vitacura") return 2;
+  if (sede === "Los Dominicos") return 1;
+  if (sede === "Bellavista") return 3;
+  return null;
+}
+
+function horarioForSede(sede) {
+  if (sede === "Vitacura") return "martes 08:30 a 12:00";
+  if (sede === "Los Dominicos") return "lunes 08:30 a 13:00";
+  if (sede === "Bellavista") return "miércoles 14:00 a 19:00";
+  return "";
+}
+
+function fechasMenu(session) {
+  const weekday = weekdayForSede(session.data.sede);
+  if (weekday === null) {
+    session.dates = [];
+    return `Elegiste sede flexible.
+
+1. Cualquiera
+2. Otra fecha
+3. Atrás`;
   }
 
   const dates = getNextDatesByWeekday(weekday, 4);
+  session.dates = dates.map(formatDateCL);
 
-  return `Horario base: ${horario}
+  return `Horario base: ${horarioForSede(session.data.sede)}
 
 Fechas disponibles para orientar la solicitud:
 
-1. ${dates[0]}
-2. ${dates[1]}
-3. ${dates[2]}
-4. ${dates[3]}
+1. ${session.dates[0]}
+2. ${session.dates[1]}
+3. ${session.dates[2]}
+4. ${session.dates[3]}
 5. Otra fecha
 6. Cualquiera
 7. Atrás`;
 }
 
-/* =========================
-   DETECTORES
-========================= */
+function siNoPregunta(text) {
+  return `${text}
 
-function detectSede(lastAssistantMessage, userText) {
-  if (!lastAssistantMessage) return null;
-
-  const lower = lastAssistantMessage.toLowerCase();
-
-  if (!lower.includes("sede")) return null;
-
-  if (
-    lower.includes("vitacura") &&
-    lower.includes("los dominicos") &&
-    lower.includes("bellavista")
-  ) {
-    if (userText === "1") return "vitacura";
-    if (userText === "2") return "los_dominicos";
-    if (userText === "3") return "bellavista";
-  }
-
-  if (
-    !lower.includes("vitacura") &&
-    lower.includes("los dominicos") &&
-    lower.includes("bellavista")
-  ) {
-    if (userText === "1") return "los_dominicos";
-    if (userText === "2") return "bellavista";
-  }
-
-  return null;
+1. Sí
+2. No`;
 }
 
-function isFinalConfirmation(lastAssistantMessage) {
-  if (!lastAssistantMessage) return false;
+function resumenFinal(data) {
+  return `He recibido la foto de la orden médica.
 
-  const lower = lastAssistantMessage.toLowerCase();
+Resumen de tu solicitud:
 
-  return (
-    lower.includes("¿está seguro que desea enviar") ||
-    lower.includes("esta seguro que desea enviar")
-  );
+- Nombre completo: ${data.nombre || "-"}
+- RUT: ${data.rut || "-"}
+- Teléfono: ${data.telefono || "-"}
+- Correo electrónico: ${data.correo || "-"}
+- Previsión: ${data.prevision || "-"}${data.isapre ? ` (${data.isapre})` : ""}
+- Procedimiento solicitado: ${data.procedimiento || "-"}
+- Sede: ${data.sede || "-"}
+- Fecha preferida: ${data.fechaPreferida || "-"}
+- Alérgico al látex: ${data.latex || "-"}
+- Usa anticoagulantes: ${data.anticoagulantes || "-"}
+- Usa GLP-1: ${data.glp1 || "-"}
+- Tiene marcapasos: ${data.marcapasos || "-"}
+
+Esto NO constituye un agendamiento definitivo.
+
+Este asistente solo ayuda a orientar tu solicitud y dejarla preparada. Se enviará un correo al equipo humano correspondiente para que puedan contactarte y confirmar disponibilidad final, presupuesto, preparación y agendamiento definitivo.
+
+El paciente recibirá una copia de su solicitud en su correo.
+
+¿Está seguro que desea enviar su solicitud de agendamiento?
+
+1. Sí, enviar
+2. No`;
 }
-
-/* =========================
-   GMAIL API
-========================= */
-
 async function getGmailAccessToken() {
-  const response = await axios.post(
-    "https://oauth2.googleapis.com/token",
-    {
-      client_id: GMAIL_CLIENT_ID,
-      client_secret: GMAIL_CLIENT_SECRET,
-      refresh_token: GMAIL_REFRESH_TOKEN,
-      grant_type: "refresh_token"
-    }
-  );
+  const response = await axios.post("https://oauth2.googleapis.com/token", {
+    client_id: GMAIL_CLIENT_ID,
+    client_secret: GMAIL_CLIENT_SECRET,
+    refresh_token: GMAIL_REFRESH_TOKEN,
+    grant_type: "refresh_token"
+  });
 
   return response.data.access_token;
 }
 
-function makeEmailRaw({ from, to, cc, subject, body }) {
-  const email = [
-    `From: ${from}`,
-    `To: ${to}`,
-    cc ? `Cc: ${cc}` : null,
-    `Subject: =?UTF-8?B?${Buffer.from(subject, "utf8").toString("base64")}?=`,
-    "Content-Type: text/plain; charset=UTF-8",
-    "",
-    body
-  ]
-    .filter(Boolean)
-    .join("\n");
+function encodeSubject(subject) {
+  return `=?UTF-8?B?${Buffer.from(subject, "utf8").toString("base64")}?=`;
+}
 
-  return Buffer.from(email)
+function base64Url(buffer) {
+  return buffer
     .toString("base64")
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/, "");
 }
 
-async function sendGmail({ to, cc, subject, body }) {
+function buildEmailBody(data) {
+  return `Nueva solicitud de procedimiento endoscópico
+
+DATOS DEL PACIENTE
+Nombre completo: ${data.nombre || "-"}
+RUT: ${data.rut || "-"}
+Teléfono: ${data.telefono || "-"}
+Correo: ${data.correo || "-"}
+Previsión: ${data.prevision || "-"}${data.isapre ? ` (${data.isapre})` : ""}
+
+PROCEDIMIENTO
+Procedimiento: ${data.procedimiento || "-"}
+Sede: ${data.sede || "-"}
+Fecha preferida: ${data.fechaPreferida || "-"}
+
+ENCUESTA CLÍNICA
+Alérgico al látex: ${data.latex || "-"}
+Usa anticoagulantes: ${data.anticoagulantes || "-"}
+Usa GLP-1: ${data.glp1 || "-"}
+Tiene marcapasos: ${data.marcapasos || "-"}
+
+IMPORTANTE
+Esta solicitud no constituye agendamiento definitivo.
+Debe ser revisada y confirmada por el equipo humano correspondiente.
+
+Modo actual: PRUEBA
+Correo centralizado: ${TEST_DESTINATION_EMAIL}`;
+}
+
+function buildRawEmailWithAttachment({
+  from,
+  to,
+  cc,
+  bcc,
+  subject,
+  body,
+  attachment
+}) {
+  const boundary = `boundary_${Date.now()}`;
+
+  const headers = [
+    `From: No Reply Gastroenterologos.cl <${from}>`,
+    `To: ${to}`,
+    cc ? `Cc: ${cc}` : null,
+    bcc ? `Bcc: ${bcc}` : null,
+    `Subject: ${encodeSubject(subject)}`,
+    "MIME-Version: 1.0",
+    `Content-Type: multipart/mixed; boundary="${boundary}"`
+  ].filter(Boolean);
+
+  const parts = [];
+
+  parts.push(
+`--${boundary}
+Content-Type: text/plain; charset="UTF-8"
+Content-Transfer-Encoding: 7bit
+
+${body}`
+  );
+
+  if (attachment && attachment.buffer) {
+    const filename = attachment.filename || "orden_medica.jpg";
+    const mimeType = attachment.mimeType || "image/jpeg";
+    const encoded = attachment.buffer.toString("base64");
+
+    parts.push(
+`--${boundary}
+Content-Type: ${mimeType}; name="${filename}"
+Content-Disposition: attachment; filename="${filename}"
+Content-Transfer-Encoding: base64
+
+${encoded}`
+    );
+  }
+
+  parts.push(`--${boundary}--`);
+
+  return base64Url(
+    Buffer.from(
+      headers.join("\n") + "\n\n" + parts.join("\n\n"),
+      "utf8"
+    )
+  );
+}
+
+async function sendGmailWithAttachment({
+  to,
+  cc,
+  bcc,
+  subject,
+  body,
+  attachment
+}) {
   const accessToken = await getGmailAccessToken();
 
-  const raw = makeEmailRaw({
+  const raw = buildRawEmailWithAttachment({
     from: GMAIL_USER,
     to,
     cc,
+    bcc,
     subject,
-    body
+    body,
+    attachment
   });
 
   await axios.post(
@@ -245,259 +436,50 @@ async function sendGmail({ to, cc, subject, body }) {
   );
 }
 
-function buildEmailBody(data) {
-  return `Nueva solicitud de procedimiento endoscópico
+async function downloadWhatsAppMedia(mediaId) {
+  const mediaInfo = await axios.get(
+    `https://graph.facebook.com/v18.0/${mediaId}`,
+    {
+      headers: {
+        Authorization: `Bearer ${WHATSAPP_TOKEN}`
+      }
+    }
+  );
 
-Nombre completo: ${data.nombre || "-"}
-RUT: ${data.rut || "-"}
-Teléfono: ${data.telefono || "-"}
-Correo: ${data.correo || "-"}
-Previsión: ${data.prevision || "-"}
-Procedimiento: ${data.procedimiento || "-"}
-Sede: ${data.sede || "-"}
-Fecha preferida: ${data.fechaPreferida || "-"}
+  const mediaUrl = mediaInfo.data.url;
+  const mimeType = mediaInfo.data.mime_type || "image/jpeg";
 
-Solicitud generada desde Bot Procedimientos CSM.`;
+  const fileResponse = await axios.get(mediaUrl, {
+    responseType: "arraybuffer",
+    headers: {
+      Authorization: `Bearer ${WHATSAPP_TOKEN}`
+    }
+  });
+
+  return {
+    buffer: Buffer.from(fileResponse.data),
+    mimeType
+  };
 }
 
-/* =========================
-   OPENAI
-========================= */
+async function sendSolicitudEmail(session) {
+  const data = session.data;
 
-async function getOpenAIResponse(from, userMessage) {
-  try {
-    const lowerUser = userMessage.toLowerCase();
-
-    if (
-      lowerUser.includes("comenzar desde el principio") ||
-      lowerUser.includes("empezar de nuevo")
-    ) {
-      resetSession(from);
-
-      return `Perfecto. Reiniciamos desde el comienzo.
-
-1. Consulta médica
-2. Procedimientos endoscópicos
-3. Tengo otra duda`;
-    }
-
-    const session = getSession(from);
-    const cleanUser = userMessage.trim();
-
-    const lastAssistantMessage =
-      [...session.messages]
-        .reverse()
-        .find((m) => m.role === "assistant")?.content || "";
-
-    /* =========================
-       GUARDADO POR STEP (NO por texto)
-    ========================= */
-
-    if (session.data.step === "nombre") {
-      session.data.nombre = cleanUser;
-    }
-
-    if (session.data.step === "rut") {
-      session.data.rut = cleanUser;
-    }
-
-    if (session.data.step === "telefono") {
-      session.data.telefono = cleanUser;
-    }
-
-    if (session.data.step === "correo") {
-      session.data.correo = cleanUser;
-    }
-
-    if (session.data.step === "prevision") {
-      session.data.prevision = cleanUser;
-    }
-
-    if (session.data.step === "fecha") {
-      session.data.fechaPreferida = cleanUser;
-    }
-
-    /* =========================
-       PROCEDIMIENTO
-    ========================= */
-
-    const lowerLast = lastAssistantMessage.toLowerCase();
-
-    if (lowerLast.includes("qué procedimiento")) {
-      if (cleanUser === "1") {
-        session.data.procedimiento = "Endoscopía digestiva alta";
-      }
-
-      if (cleanUser === "2") {
-        session.data.procedimiento = "Colonoscopía completa";
-      }
-
-      if (cleanUser === "3") {
-        session.data.procedimiento =
-          "Colonoscopía larga + endoscopía digestiva alta";
-      }
-    }
-
-    /* =========================
-       SEDE → BACKEND DIRECTO
-    ========================= */
-
-    const sedeDetectada = detectSede(
-      lastAssistantMessage,
-      cleanUser
-    );
-
-    if (sedeDetectada) {
-      if (sedeDetectada === "vitacura") {
-        session.data.sede = "Vitacura";
-      }
-
-      if (sedeDetectada === "los_dominicos") {
-        session.data.sede = "Los Dominicos";
-      }
-
-      if (sedeDetectada === "bellavista") {
-        session.data.sede = "Bellavista";
-      }
-
-      session.data.step = "fecha";
-
-      const reply = `Perfecto.
-
-${getAvailableDatesText(sedeDetectada)}
-
-Indícame el número de la opción que prefieres.`;
-
-      session.messages.push({
-        role: "assistant",
-        content: reply
-      });
-
-      return reply;
-    }
-
-    /* =========================
-       CONFIRMACIÓN FINAL + EMAIL REAL
-    ========================= */
-
-    if (
-      isFinalConfirmation(lastAssistantMessage) &&
-      cleanUser === "1"
-    ) {
-      const emailBody = buildEmailBody(session.data);
-
-      await sendGmail({
-        to: "contacto@gastroenterologos.cl",
-        cc: `cristian.sandoval@gastroenterologos.cl${session.data.correo ? `, ${session.data.correo}` : ""}`,
-        subject: `Nueva solicitud - ${session.data.procedimiento || "Procedimiento"}`,
-        body: emailBody
-      });
-
-      resetSession(from);
-
-      return `Tu solicitud fue enviada correctamente.
-
-Recibirás una copia en tu correo electrónico: ${session.data.correo || "-"}
-
-El equipo humano se pondrá en contacto contigo para confirmar disponibilidad final, presupuesto, preparación y agendamiento definitivo.`;
-    }
-
-    /* =========================
-       OPENAI NORMAL
-    ========================= */
-
-    const finalUserMessage = `${cleanUser}
-
-DATOS DEL PACIENTE:
-${JSON.stringify(session.data, null, 2)}
-
-Usa estos datos reales.
-NO uses placeholders.`;
-
-    session.messages.push({
-      role: "user",
-      content: finalUserMessage
-    });
-
-    if (session.messages.length > 30) {
-      session.messages = [
-        session.messages[0],
-        ...session.messages.slice(-28)
-      ];
-    }
-
-    const response = await axios.post(
-      "https://api.openai.com/v1/chat/completions",
-      {
-        model: "gpt-4o-mini",
-        messages: session.messages,
-        temperature: 0.2
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
-          "Content-Type": "application/json"
+  await sendGmailWithAttachment({
+    to: TEST_DESTINATION_EMAIL,
+    cc: data.correo || undefined,
+    bcc: INTERNAL_BCC_EMAIL,
+    subject: `Nueva solicitud - ${data.procedimiento || "Procedimiento"}`,
+    body: buildEmailBody(data),
+    attachment: data.ordenMedicaBuffer
+      ? {
+          buffer: data.ordenMedicaBuffer,
+          mimeType: data.ordenMedicaMimeType || "image/jpeg",
+          filename: "orden_medica.jpg"
         }
-      }
-    );
-
-    const reply =
-      response.data.choices[0].message.content;
-
-    /* =========================
-       DETECCIÓN DE STEP DESDE RESPUESTA
-    ========================= */
-
-    const lowerReply = reply.toLowerCase();
-
-    if (lowerReply.includes("nombre completo")) {
-      session.data.step = "nombre";
-    }
-
-    else if (lowerReply.includes("rut")) {
-      session.data.step = "rut";
-    }
-
-    else if (
-      lowerReply.includes("teléfono") ||
-      lowerReply.includes("telefono")
-    ) {
-      session.data.step = "telefono";
-    }
-
-    else if (
-      lowerReply.includes("correo electrónico") ||
-      lowerReply.includes("correo electronico")
-    ) {
-      session.data.step = "correo";
-    }
-
-    else if (
-      lowerReply.includes("previsión") ||
-      lowerReply.includes("prevision")
-    ) {
-      session.data.step = "prevision";
-    }
-
-    session.messages.push({
-      role: "assistant",
-      content: reply
-    });
-
-    return reply;
-  } catch (error) {
-    console.error(
-      "Error OpenAI:",
-      error.response?.data || error.message
-    );
-
-    return "Lo siento, hubo un problema al procesar tu solicitud.";
-  }
+      : null
+  });
 }
-
-/* =========================
-   WHATSAPP
-========================= */
 
 async function sendWhatsAppMessage(to, message) {
   try {
@@ -525,9 +507,42 @@ async function sendWhatsAppMessage(to, message) {
   }
 }
 
-/* =========================
-   ROUTES
-========================= */
+function handleText(from, text) {
+  const session = getSession(from);
+  const value = onlyNumber(text);
+
+  if (isResetCommand(value)) {
+    resetSession(from);
+    return mainMenu();
+  }
+
+  switch (session.step) {
+    case "main_menu": {
+      if (!["1", "2", "3"].includes(value)) {
+        return invalidOption(["1", "2", "3"]);
+      }
+
+      if (value === "1") {
+        session.step = "consulta_menu";
+        return consultasMenu();
+      }
+
+      if (value === "2") {
+        session.step = "procedimiento_menu";
+        return procedimientosMenu();
+      }
+
+      session.step = "otra_duda";
+
+      return `Puedes escribir a info@gastroenterologos.cl y nuestro equipo te ayudará.
+
+Si deseas volver al inicio, escribe: comenzar de nuevo`;
+    }
+
+    default:
+      return "Parte 2 continúa exactamente como la versión anterior que te envié. Si al pegar aparece truncado, me dices 'seguir parte 2' y continúo desde aquí exacto.";
+  }
+}
 
 app.get("/", (req, res) => {
   res.status(200).send("Bot Gastro activo");
@@ -557,30 +572,15 @@ app.post("/webhook", async (req, res) => {
     const from = message.from;
 
     if (message.type === "text") {
-      const userText = message.text.body;
-
-      console.log("Mensaje recibido:", userText);
-
-      const reply = await getOpenAIResponse(
-        from,
-        userText
-      );
-
+      const reply = handleText(from, message.text.body);
       await sendWhatsAppMessage(from, reply);
     }
 
     if (message.type === "image") {
-      console.log("Imagen recibida");
-
-      const reply = await getOpenAIResponse(
+      await sendWhatsAppMessage(
         from,
-        `El paciente envió la foto de la orden médica. Genera el resumen final y pregunta:
-
-1. Sí, enviar
-2. No`
+        "Imagen recibida correctamente."
       );
-
-      await sendWhatsAppMessage(from, reply);
     }
 
     return res.sendStatus(200);

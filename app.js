@@ -312,13 +312,31 @@ app.post("/webhook", async (req, res) => {
     const message =
       req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
 
-    if (message && message.type === "text") {
-      const from = message.from;
+    if (!message) {
+      return res.sendStatus(200);
+    }
+
+    const from = message.from;
+
+    if (message.type === "text") {
       const userText = message.text.body;
 
       console.log("Mensaje recibido:", userText);
 
       const reply = await getOpenAIResponse(from, userText);
+
+      await sendWhatsAppMessage(from, reply);
+    }
+
+    if (message.type === "image") {
+      const imageId = message.image?.id;
+
+      console.log("Imagen recibida. Media ID:", imageId);
+
+      const reply = await getOpenAIResponse(
+        from,
+        "El paciente envió una foto de la orden médica. Continúa el flujo: registra que la orden médica fue recibida, muestra el resumen de la solicitud y pregunta si desea enviar la solicitud de agendamiento con opciones numeradas."
+      );
 
       await sendWhatsAppMessage(from, reply);
     }
@@ -329,7 +347,6 @@ app.post("/webhook", async (req, res) => {
     return res.sendStatus(500);
   }
 });
-
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {

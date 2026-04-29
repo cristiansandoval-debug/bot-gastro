@@ -239,7 +239,74 @@ async function sendWhatsAppMessage(to, message) {
     );
   }
 }
+async function getGmailAccessToken() {
+  const response = await axios.post("https://oauth2.googleapis.com/token", {
+    client_id: process.env.GMAIL_CLIENT_ID,
+    client_secret: process.env.GMAIL_CLIENT_SECRET,
+    refresh_token: process.env.GMAIL_REFRESH_TOKEN,
+    grant_type: "refresh_token"
+  });
 
+  return response.data.access_token;
+}
+
+function makeEmailRaw({ from, to, subject, body }) {
+  const message = [
+    `From: ${from}`,
+    `To: ${to}`,
+    `Subject: ${subject}`,
+    "Content-Type: text/plain; charset=UTF-8",
+    "",
+    body
+  ].join("\n");
+
+  return Buffer.from(message)
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
+async function sendGmail({ to, subject, body }) {
+  const accessToken = await getGmailAccessToken();
+
+  const raw = makeEmailRaw({
+    from: process.env.GMAIL_USER,
+    to,
+    subject,
+    body
+  });
+
+  await axios.post(
+    "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+    { raw },
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json"
+      }
+    }
+  );
+}
+
+app.get("/test-email", async (req, res) => {
+  try {
+    if (req.query.token !== process.env.VERIFY_TOKEN) {
+      return res.status(403).send("No autorizado");
+    }
+
+    await sendGmail({
+      to: process.env.GMAIL_USER,
+      subject: "Prueba Bot Procedimientos CSM",
+      body: "Correo de prueba enviado correctamente desde Render usando Gmail API."
+    });
+
+    return res.status(200).send("Correo enviado correctamente");
+  } catch (error) {
+    console.error("Error enviando correo Gmail:", error.response?.data || error.message);
+    return res.status(500).send("Error enviando correo");
+  }
+});
 app.post("/webhook", async (req, res) => {
   try {
     const message =

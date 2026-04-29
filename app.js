@@ -11,6 +11,72 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT;
 
 const sessions = {};
+const SESSION_TIMEOUT_MS = 12 * 60 * 60 * 1000; // 12 horas
+
+function shouldResetSession(text) {
+  const clean = text.toLowerCase().trim();
+  return [
+    "reiniciar",
+    "reinicia",
+    "comenzar de nuevo",
+    "empezar de nuevo",
+    "nuevo agendamiento",
+    "partir de nuevo",
+    "volver al inicio",
+    "inicio",
+    "reset"
+  ].some((phrase) => clean.includes(phrase));
+}
+
+function createNewSession() {
+  return {
+    lastInteraction: Date.now(),
+    messages: [
+      {
+        role: "system",
+        content:
+          SYSTEM_PROMPT +
+          "\n\nIMPORTANTE: Si el paciente responde con un número, debes interpretarlo según el último menú mostrado."
+      }
+    ],
+    data: {
+      nombre: null,
+      rut: null,
+      telefono: null,
+      correo: null,
+      prevision: null,
+      procedimiento: null,
+      sede: null,
+      fechaPreferida: null,
+      ordenMedicaRecibida: false
+    }
+  };
+}
+
+function getSession(from) {
+  const existing = sessions[from];
+
+  if (!existing) {
+    sessions[from] = createNewSession();
+    return sessions[from];
+  }
+
+  const inactiveTooLong =
+    Date.now() - existing.lastInteraction > SESSION_TIMEOUT_MS;
+
+  if (inactiveTooLong) {
+    sessions[from] = createNewSession();
+    return sessions[from];
+  }
+
+  existing.lastInteraction = Date.now();
+  return existing;
+}
+
+function resetSession(from) {
+  sessions[from] = createNewSession();
+  return sessions[from];
+}
 
 function getNextDatesByWeekday(targetWeekday, count = 4) {
   const dates = [];
@@ -20,9 +86,7 @@ function getNextDatesByWeekday(targetWeekday, count = 4) {
   let date = new Date(today);
 
   while (dates.length < count) {
-    const day = date.getDay(); // 0 domingo, 1 lunes, 2 martes, 3 miércoles
-
-    if (day === targetWeekday && date >= today) {
+    if (date.getDay() === targetWeekday && date >= today) {
       dates.push(
         date.toLocaleDateString("es-CL", {
           weekday: "long",
@@ -58,11 +122,7 @@ function getAvailableDatesText(sede) {
 
   const dates = getNextDatesByWeekday(weekday, 4);
 
-  return `
-DATOS REALES CALCULADOS POR BACKEND.
-Usa exactamente estas fechas. No inventes otras.
-
-Horario base: ${horario}
+  return `Horario base: ${horario}
 
 Fechas disponibles para orientar la solicitud:
 
@@ -72,109 +132,65 @@ Fechas disponibles para orientar la solicitud:
 4. ${dates[3]}
 5. Otra fecha
 6. Cualquiera
-7. Atrás
-`;
+7. Atrás`;
 }
 
-function detectSedeFromUserChoice(lastAssistantMessage, userText) {
-  const text = userText.trim();
-
+function detectSede(lastAssistantMessage, userText) {
   if (!lastAssistantMessage) return null;
 
   const lower = lastAssistantMessage.toLowerCase();
 
-  if (!lower.includes("sede prefieres")) return null;
+  if (!lower.includes("sede preferida")) return null;
 
-  // Menú con Vitacura + Los Dominicos + Bellavista
   if (
     lower.includes("vitacura") &&
     lower.includes("los dominicos") &&
     lower.includes("bellavista")
   ) {
-    if (text === "1") return "vitacura";
-    if (text === "2") return "los_dominicos";
-    if (text === "3") return "bellavista";
-    return null;
+    if (userText === "1") return "vitacura";
+    if (userText === "2") return "los_dominicos";
+    if (userText === "3") return "bellavista";
   }
 
-  // Menú solo Los Dominicos + Bellavista
   if (
     !lower.includes("vitacura") &&
     lower.includes("los dominicos") &&
     lower.includes("bellavista")
   ) {
-    if (text === "1") return "los_dominicos";
-    if (text === "2") return "bellavista";
-    return null;
+    if (userText === "1") return "los_dominicos";
+    if (userText === "2") return "bellavista";
   }
 
   return null;
 }
 
-app.get("/", (req, res) => {
-  res.status(200).send("Bot Gastro activo");
-});
-
-app.get("/webhook", (req, res) => {
-  const mode = req.query["hub.mode"];
-  const token = req.query["hub.verify_token"];
-  const challenge = req.query["hub.challenge"];
-
-  if (mode === "subscribe" && token === VERIFY_TOKEN) {
-    return res.status(200).send(challenge);
-  }
-
-  return res.sendStatus(403);
-});
-
-function getSession(from) {
-  if (!sessions[from]) {
-  sessions[from] = {
-  messages: [
-    {
-      role: "system",
-      content:
-        SYSTEM_PROMPT +
-        "\n\nIMPORTANTE: Si el paciente responde con un número, debes interpretarlo según el último menú mostrado y no según el menú principal. Cuando recibas DATOS REALES CALCULADOS POR BACKEND, debes usar exactamente esas fechas y no inventar otras."
-    }
-  ],
-  data: {
-    nombre: null,
-    rut: null,
-    telefono: null,
-    correo: null,
-    prevision: null,
-    procedimiento: null,
-    sede: null,
-    fechaPreferida: null,
-    ordenMedicaRecibida: false
-  }
-};
-        {
-          role: "system",
-          content:
-            SYSTEM_PROMPT +
-            "\n\nIMPORTANTE: Si el paciente responde con un número, debes interpretarlo según el último menú mostrado y no según el menú principal. Cuando recibas DATOS REALES CALCULADOS POR BACKEND, debes usar exactamente esas fechas y no inventar otras."
-        }
-      ]
-    };
-  }
-
-  return sessions[from];
-}
-
 async function getOpenAIResponse(from, userMessage) {
   try {
+    if (shouldResetSession(userMessage)) {
+      resetSession(from);
+      return `Perfecto, comenzamos desde el inicio.
+
+Hola, soy el asistente virtual del Dr. Cristián Sandoval Vergés – Gastroenterólogo.
+
+Te ayudaré a orientar tu solicitud.
+
+Indícame qué necesitas:
+
+1. Consulta médica
+2. Procedimientos endoscópicos
+3. Tengo otra duda`;
+    }
+
     const session = getSession(from);
 
-    const lastAssistantMessage = [...session.messages]
-      .reverse()
-      .find((m) => m.role === "assistant")?.content || "";
+    const lastAssistantMessage =
+      [...session.messages]
+        .reverse()
+        .find((m) => m.role === "assistant")?.content || "";
 
     const lowerLast = lastAssistantMessage.toLowerCase();
     const cleanUser = userMessage.trim();
 
-    // Guardado estructurado real
     if (lowerLast.includes("nombre completo")) {
       session.data.nombre = cleanUser;
     }
@@ -205,59 +221,40 @@ async function getOpenAIResponse(from, userMessage) {
     }
 
     if (lowerLast.includes("qué procedimiento necesitas")) {
-      if (cleanUser === "1") {
-        session.data.procedimiento = "Endoscopía digestiva alta";
-      }
-      if (cleanUser === "2") {
-        session.data.procedimiento = "Colonoscopía completa";
-      }
+      if (cleanUser === "1") session.data.procedimiento = "Endoscopía digestiva alta";
+      if (cleanUser === "2") session.data.procedimiento = "Colonoscopía completa";
       if (cleanUser === "3") {
         session.data.procedimiento =
           "Colonoscopía larga + endoscopía digestiva alta";
       }
     }
 
-    const sedeDetectada = detectSedeFromUserChoice(
-      lastAssistantMessage,
-      userMessage
-    );
-
-    let finalUserMessage = userMessage;
+    const sedeDetectada = detectSede(lastAssistantMessage, cleanUser);
 
     if (sedeDetectada) {
-  if (sedeDetectada === "vitacura") session.data.sede = "Vitacura";
-  if (sedeDetectada === "los_dominicos") session.data.sede = "Los Dominicos";
-  if (sedeDetectada === "bellavista") session.data.sede = "Bellavista";
+      if (sedeDetectada === "vitacura") session.data.sede = "Vitacura";
+      if (sedeDetectada === "los_dominicos") session.data.sede = "Los Dominicos";
+      if (sedeDetectada === "bellavista") session.data.sede = "Bellavista";
 
-  const fechasReales = getAvailableDatesText(sedeDetectada);
+      const reply = `Perfecto.
 
-  const reply = `Perfecto.
-
-${fechasReales}
+${getAvailableDatesText(sedeDetectada)}
 
 Indícame el número de la opción que prefieres.`;
 
-  session.messages.push({
-    role: "user",
-    content: userMessage
-  });
+      session.messages.push({ role: "user", content: cleanUser });
+      session.messages.push({ role: "assistant", content: reply });
 
-  session.messages.push({
-    role: "assistant",
-    content: reply
-  });
+      return reply;
+    }
 
-  return reply;
-}
+    const finalUserMessage = `${cleanUser}
 
-    finalUserMessage += `
-
-DATOS ESTRUCTURADOS DEL PACIENTE:
+DATOS DEL PACIENTE:
 ${JSON.stringify(session.data, null, 2)}
 
-Usa estos datos reales para cualquier resumen.
-NO uses placeholders.
-`;
+Usa estos datos reales.
+NO uses placeholders.`;
 
     session.messages.push({
       role: "user",
@@ -268,75 +265,6 @@ NO uses placeholders.
       session.messages = [
         session.messages[0],
         ...session.messages.slice(-28)
-      ];
-    }
-
-    const response = await axios.post(
-      "https://api.openai.com/v1/chat/completions",
-      {
-        model: "gpt-4o-mini",
-        messages: session.messages,
-        temperature: 0.2
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
-          "Content-Type": "application/json"
-        }
-      }
-    );
-
-    const reply =
-      response.data.choices[0].message.content;
-
-    session.messages.push({
-      role: "assistant",
-      content: reply
-    });
-
-    return reply;
-  } catch (error) {
-    console.error(
-      "Error OpenAI:",
-      error.response?.data || error.message
-    );
-
-    return "Lo siento, hubo un problema al procesar tu mensaje.";
-  }
-} {
-  try {
-    const session = getSession(from);
-
-    const lastAssistantMessage = [...session.messages]
-      .reverse()
-      .find((m) => m.role === "assistant")?.content;
-
-    const sedeDetectada = detectSedeFromUserChoice(
-      lastAssistantMessage,
-      userMessage
-    );
-
-    let finalUserMessage = userMessage;
-
-    if (sedeDetectada) {
-      const fechasReales = getAvailableDatesText(sedeDetectada);
-
-      finalUserMessage =
-        userMessage +
-        "\n\n" +
-        fechasReales +
-        "\nResponde mostrando estas opciones de fecha al paciente de forma breve, clara y ordenada.";
-    }
-
-    session.messages.push({
-      role: "user",
-      content: finalUserMessage
-    });
-
-    if (session.messages.length > 20) {
-      session.messages = [
-        session.messages[0],
-        ...session.messages.slice(-18)
       ];
     }
 
@@ -369,7 +297,7 @@ NO uses placeholders.
       error.response?.data || error.message
     );
 
-    return "Lo siento, hubo un problema al procesar tu mensaje. Por favor intenta nuevamente.";
+    return "Lo siento, hubo un problema al procesar tu mensaje.";
   }
 }
 
@@ -379,7 +307,7 @@ async function sendWhatsAppMessage(to, message) {
       `https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`,
       {
         messaging_product: "whatsapp",
-        to: to,
+        to,
         text: {
           body: message
         }
@@ -398,74 +326,23 @@ async function sendWhatsAppMessage(to, message) {
     );
   }
 }
-async function getGmailAccessToken() {
-  const response = await axios.post("https://oauth2.googleapis.com/token", {
-    client_id: process.env.GMAIL_CLIENT_ID,
-    client_secret: process.env.GMAIL_CLIENT_SECRET,
-    refresh_token: process.env.GMAIL_REFRESH_TOKEN,
-    grant_type: "refresh_token"
-  });
 
-  return response.data.access_token;
-}
-
-function makeEmailRaw({ from, to, subject, body }) {
-  const message = [
-    `From: ${from}`,
-    `To: ${to}`,
-    `Subject: ${subject}`,
-    "Content-Type: text/plain; charset=UTF-8",
-    "",
-    body
-  ].join("\n");
-
-  return Buffer.from(message)
-    .toString("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-}
-
-async function sendGmail({ to, subject, body }) {
-  const accessToken = await getGmailAccessToken();
-
-  const raw = makeEmailRaw({
-    from: process.env.GMAIL_USER,
-    to,
-    subject,
-    body
-  });
-
-  await axios.post(
-    "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
-    { raw },
-    {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json"
-      }
-    }
-  );
-}
-
-app.get("/test-email", async (req, res) => {
-  try {
-    if (req.query.token !== process.env.VERIFY_TOKEN) {
-      return res.status(403).send("No autorizado");
-    }
-
-    await sendGmail({
-      to: process.env.GMAIL_USER,
-      subject: "Prueba Bot Procedimientos CSM",
-      body: "Correo de prueba enviado correctamente desde Render usando Gmail API."
-    });
-
-    return res.status(200).send("Correo enviado correctamente");
-  } catch (error) {
-    console.error("Error enviando correo Gmail:", error.response?.data || error.message);
-    return res.status(500).send("Error enviando correo");
-  }
+app.get("/", (req, res) => {
+  res.status(200).send("Bot Gastro activo");
 });
+
+app.get("/webhook", (req, res) => {
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
+
+  if (mode === "subscribe" && token === VERIFY_TOKEN) {
+    return res.status(200).send(challenge);
+  }
+
+  return res.sendStatus(403);
+});
+
 app.post("/webhook", async (req, res) => {
   try {
     const message =
@@ -488,31 +365,18 @@ app.post("/webhook", async (req, res) => {
     }
 
     if (message.type === "image") {
-      const imageId = message.image?.id;
-
-      console.log("Imagen recibida. Media ID:", imageId);
+      console.log("Imagen recibida");
 
       const session = getSession(from);
+      session.data.ordenMedicaRecibida = true;
 
-const conversationHistory = session.messages
-  .filter(m => m.role !== "system")
-  .map(m => `${m.role}: ${m.content}`)
-  .join("\n");
-
-const reply = await getOpenAIResponse(
-  from,
-  `El paciente envió una foto de la orden médica.
-
-Usa toda la conversación previa para identificar:
-nombre completo, RUT, teléfono, correo, previsión, procedimiento, sede y fecha preferida.
-
-NO uses placeholders como [Nombre del paciente].
-
-Debes completar el resumen con los datos reales obtenidos desde la conversación.
-
-Conversación previa:
-${conversationHistory}`
-);
+      const reply = await getOpenAIResponse(
+        from,
+        `El paciente envió la foto de la orden médica.
+Genera el resumen final usando los datos estructurados guardados y pregunta:
+1. Sí, enviar
+2. No`
+      );
 
       await sendWhatsAppMessage(from, reply);
     }
@@ -523,6 +387,7 @@ ${conversationHistory}`
     return res.sendStatus(500);
   }
 });
+
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {

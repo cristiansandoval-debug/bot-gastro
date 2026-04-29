@@ -206,7 +206,7 @@ function makeEmailRaw({ from, to, cc, subject, body }) {
     `From: ${from}`,
     `To: ${to}`,
     cc ? `Cc: ${cc}` : null,
-    `Subject: ${subject}`,
+   `Subject: =?UTF-8?B?${Buffer.from(subject, "utf8").toString("base64")}?=`,
     "Content-Type: text/plain; charset=UTF-8",
     "",
     body
@@ -375,8 +375,8 @@ Indícame el número de la opción que prefieres.`;
       await sendGmail({
         to: "contacto@gastroenterologos.cl",
         cc: `cristian.sandoval@gastroenterologos.cl, ${session.data.correo || ""}`,
-        subject: `Nueva solicitud - ${session.data.procedimiento || "Procedimiento"}`,
-        body: emailBody
+subject: `Nueva solicitud - ${session.data.procedimiento || "Procedimiento"}`
+         body: emailBody
       });
 
       return `Tu solicitud fue enviada correctamente.

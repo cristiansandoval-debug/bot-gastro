@@ -163,8 +163,8 @@ function proximosDias(diaNombre, cantidad = 4, sedeKey = "los_dominicos") {
 
 // Devuelve etiqueta de horario según sede
 function etiquetaHorario(sedeKey) {
-  if (sedeKey === "bellavista") return "_(tarde)_";
-  return "_(mañana)_";
+  if (sedeKey === "bellavista") return "_(p.m.)_";
+  return "_(a.m.)_";
 }
 function todasLasFechas30Dias(sedesKeys) {
   const diasMap = {
@@ -309,32 +309,46 @@ async function getGmailAccessToken() {
 }
 
 function buildEmailBody(data) {
-  return `Nueva solicitud de procedimiento endoscópico — Dr. Cristián Sandoval Vergés
-${"=".repeat(50)}
+  return `════════════════════════════════════════════════════
+  SOLICITUD DE PROCEDIMIENTO — DR. CRISTIÁN SANDOVAL VERGÉS
+════════════════════════════════════════════════════
 
-DATOS DEL PACIENTE
-Nombre completo : ${data.nombre     || "-"}
-Edad            : ${data.edad       ? `${data.edad} años` : "-"}
-RUT             : ${data.rut        || "-"}
-Teléfono        : ${data.telefono   || "-"}
-Correo          : ${data.correo     || "-"}
-Previsión       : ${data.prevision  || "-"}${data.isapre ? ` (${data.isapre})` : ""}
+👤  DATOS DEL PACIENTE
+────────────────────────────────────────────────────
+  Nombre       : ${data.nombre     || "-"}
+  Edad         : ${data.edad       ? `${data.edad} años` : "-"}
+  RUT          : ${data.rut        || "-"}
+  Teléfono     : ${data.telefono   || "-"}
+  Correo       : ${data.correo     || "-"}
+  Previsión    : ${data.prevision  || "-"}${data.isapre ? ` (${data.isapre})` : ""}
 
-PROCEDIMIENTO
-Procedimiento   : ${data.procedimiento  || "-"}
-Sede            : ${data.sede           || "-"}
-Fecha preferida : ${data.fechaPreferida || "-"}
+🔬  PROCEDIMIENTO SOLICITADO
+────────────────────────────────────────────────────
+  Procedimiento  : ${data.procedimiento  || "-"}
+  Sede           : ${data.sede           || "-"}
+  Fecha preferida: ${data.fechaPreferida || "-"}
 
-ENCUESTA CLÍNICA
-Alérgico al látex    : ${data.latex           || "-"}
-Usa anticoagulantes  : ${data.anticoagulantes  || "-"}
-Usa GLP-1            : ${data.glp1            || "-"}
-Tiene marcapasos     : ${data.marcapasos      || "-"}
+🩺  ENCUESTA CLÍNICA
+────────────────────────────────────────────────────
+  Alérgico al látex    : ${data.latex           || "-"}
+  Anticoagulantes      : ${data.anticoagulantes  || "-"}
+  Análogos GLP-1       : ${data.glp1            || "-"}
+  Marcapasos           : ${data.marcapasos      || "-"}
 
-${"=".repeat(50)}
-IMPORTANTE
-Esta solicitud NO constituye agendamiento definitivo.
-Debe ser revisada y confirmada por el equipo humano correspondiente.`;
+════════════════════════════════════════════════════
+⚠️  IMPORTANTE
+────────────────────────────────────────────────────
+Esta solicitud NO constituye un agendamiento definitivo.
+
+El equipo deberá contactar al paciente para confirmar:
+  • Disponibilidad final
+  • Presupuesto y aranceles
+  • Indicaciones de preparación
+  • Agendamiento definitivo
+
+El paciente será contactado desde el área de presupuestos
+a la brevedad para coordinar los detalles.
+════════════════════════════════════════════════════`;
 }
 
 function buildRawEmail({ from, to, cc, bcc, subject, body, attachment }) {
@@ -869,7 +883,7 @@ async function procesarMensaje(from, text, session) {
     if (t === "1") { session.data.anticoagulantes = "Sí"; session.step = STEPS.GLP1; }
     else if (t === "2") { session.data.anticoagulantes = "No"; session.step = STEPS.GLP1; }
     else return `¿Usas *anticoagulantes*?\n\n1️⃣ Sí\n2️⃣ No`;
-    return `¿Usas medicamentos *GLP-1* (como Ozempic o Saxenda)?\n\n1️⃣ Sí\n2️⃣ No`;
+    return `¿Usa *análogos GLP-1*?\n_(Ozempic, Wegovy, Rybelsus, Victoza, Saxenda, Mounjaro, Trulicity, entre otros)_\n\n1️⃣ Sí\n2️⃣ No`;
   }
 
   if (session.step === STEPS.GLP1) {

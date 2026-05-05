@@ -2,14 +2,14 @@
 // BOT WHATSAPP - Dr. Cristián Sandoval Vergés – Gastroenterólogo
 // Arquitectura: Steps fijos en código + GPT para respuestas naturales
 // ============================================================
- 
+
 const express = require("express");
 const axios = require("axios");
 const { google } = require("googleapis");
- 
+
 const app = express();
 app.use(express.json());
- 
+
 // ============================================================
 // VARIABLES DE ENTORNO (configurar en Render)
 // ============================================================
@@ -26,7 +26,7 @@ const INTERNAL_BCC_EMAIL   = process.env.INTERNAL_BCC_EMAIL   || "cristian.sando
 const GOOGLE_SHEET_ID      = process.env.GOOGLE_SHEET_ID;
 const GOOGLE_SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
 const GOOGLE_PRIVATE_KEY   = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n");
- 
+
 // ============================================================
 // DEFINICIÓN DE STEPS
 // ============================================================
@@ -63,7 +63,7 @@ const STEPS = {
   CONFIRMAR_TELEFONO:    "confirmar_telefono",
   CONFIRMAR_CORREO:      "confirmar_correo",
 };
- 
+
 // ============================================================
 // SEDES Y DISPONIBILIDAD BASE
 // ============================================================
@@ -72,7 +72,7 @@ const DISPONIBILIDAD_BASE = {
   los_dominicos: { dia: "lunes",     horario: "08:30 a 13:00" },
   bellavista:    { dia: "miércoles", horario: "14:00 a 19:00" },
 };
- 
+
 // Procedimientos disponibles por sede
 const SEDES_POR_PROCEDIMIENTO = {
   endoscopia:     ["vitacura", "los_dominicos", "bellavista"],
@@ -84,12 +84,12 @@ const SEDES_POR_PROCEDIMIENTO = {
   ligadura_varices:   ["bellavista"],
   argon_plasma:       ["bellavista"],
 };
- 
+
 // ============================================================
 // SESIONES EN MEMORIA
 // ============================================================
 const sessions = {};
- 
+
 function getSession(from) {
   if (!sessions[from]) {
     sessions[from] = {
@@ -100,7 +100,7 @@ function getSession(from) {
   }
   return sessions[from];
 }
- 
+
 function resetSession(from) {
   sessions[from] = {
     step: STEPS.MENU_PRINCIPAL,
@@ -108,18 +108,18 @@ function resetSession(from) {
     history: [],
   };
 }
- 
+
 // ============================================================
 // UTILIDADES
 // ============================================================
 function cleanText(text) {
   return text?.trim().toLowerCase().replace(/[.,!?]/g, "") || "";
 }
- 
+
 function isResetCommand(text) {
   return ["reiniciar", "comenzar de nuevo", "inicio", "menu", "menú", "reset", "volver", "salir"].includes(text);
 }
- 
+
 // Formatea teléfono chileno a +56 9 XXXX XXXX
 function formatearTelefono(raw) {
   let digits = raw.replace(/\D/g, "");
@@ -133,81 +133,33 @@ function formatearTelefono(raw) {
   }
   return null;
 }
- 
-// Calcula los próximos N días de la semana, devuelve {label, fecha}
-function proximosDias(diaNombre, cantidad = 4, sedeKey = "los_dominicos") {
+
+// Calcula los próximos N días de la semana (0=domingo, 1=lunes... 3=miércoles, 2=martes)
+function proximosDias(diaNombre, cantidad = 4) {
   const diasMap = {
     domingo: 0, lunes: 1, martes: 2, miercoles: 3, miércoles: 3,
     jueves: 4, viernes: 5, sabado: 6, sábado: 6
   };
-  const nombresCapitalizados = ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
   const diaNum = diasMap[diaNombre.toLowerCase()];
   const hoy = new Date();
   const fechas = [];
   let fecha = new Date(hoy);
- 
+
   while (fechas.length < cantidad) {
     fecha.setDate(fecha.getDate() + 1);
     if (fecha.getDay() === diaNum) {
-      const d = fecha.getDate().toString().padStart(2, "0");
-      const m = (fecha.getMonth() + 1).toString().padStart(2, "0");
-      const y = fecha.getFullYear();
-      fechas.push({
-        label: `${nombresCapitalizados[fecha.getDay()]} ${d}/${m}/${y} ${etiquetaHorario(sedeKey)}`,
-        fecha: `${d}/${m}/${y}`
-      });
+      fechas.push(new Date(fecha));
     }
   }
-  return fechas;
-}
- 
-// Devuelve etiqueta de horario según sede
-function etiquetaHorario(sedeKey) {
-  if (sedeKey === "bellavista") return "(p.m.)";
-  return "(a.m.)";
-}
-function todasLasFechas30Dias(sedesKeys) {
-  const diasMap = {
-    domingo: 0, lunes: 1, martes: 2, miercoles: 3, miércoles: 3,
-    jueves: 4, viernes: 5, sabado: 6, sábado: 6
-  };
-  const nombresCapitalizados = ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
-  const hoy = new Date();
-  const limite = new Date(hoy);
-  limite.setDate(limite.getDate() + 30);
- 
-  const resultados = [];
-  let fecha = new Date(hoy);
-  fecha.setDate(fecha.getDate() + 1);
- 
-  while (fecha <= limite) {
-    for (const sedeKey of sedesKeys) {
-      const info = DISPONIBILIDAD_BASE[sedeKey];
-      if (!info) continue;
-      const diaNum = diasMap[info.dia.toLowerCase()];
-      if (fecha.getDay() === diaNum) {
-        const d = fecha.getDate().toString().padStart(2, "0");
-        const m = (fecha.getMonth() + 1).toString().padStart(2, "0");
-        const y = fecha.getFullYear();
-        resultados.push({
-          label: `${nombresCapitalizados[fecha.getDay()]} ${d}/${m}/${y} — ${nombreSede(sedeKey)} ${etiquetaHorario(sedeKey)}`,
-          fecha: `${d}/${m}/${y}`,
-          sede: nombreSede(sedeKey),
-          sedeKey
-        });
-      }
-    }
-    fecha.setDate(fecha.getDate() + 1);
-  }
- 
-  // Ordenar por fecha
-  return resultados.sort((a, b) => {
-    const [da, ma, ya] = a.fecha.split("/").map(Number);
-    const [db, mb, yb] = b.fecha.split("/").map(Number);
-    return new Date(ya, ma-1, da) - new Date(yb, mb-1, db);
+
+  return fechas.map(f => {
+    const d = f.getDate().toString().padStart(2, "0");
+    const m = (f.getMonth() + 1).toString().padStart(2, "0");
+    const y = f.getFullYear();
+    return `${d}/${m}/${y}`;
   });
 }
- 
+
 function nombreSede(key) {
   const nombres = {
     vitacura: "Vitacura",
@@ -216,7 +168,7 @@ function nombreSede(key) {
   };
   return nombres[key] || key;
 }
- 
+
 // ============================================================
 // GOOGLE SHEETS - Leer disponibilidad real
 // ============================================================
@@ -242,7 +194,7 @@ async function getDisponibilidadSheet() {
     return null;
   }
 }
- 
+
 // ============================================================
 // GPT - Respuestas naturales
 // ============================================================
@@ -252,7 +204,7 @@ NO tomas decisiones de flujo. Solo redactas la respuesta al paciente según la i
 NO inventes información médica, horarios ni fechas.
 NO digas que agendas definitivamente. Siempre aclara que es una orientación/solicitud.
 Responde siempre en máximo 3-4 líneas, sin listas largas innecesarias.`;
- 
+
 async function gptResponde(instruccion, historial = []) {
   try {
     const messages = [
@@ -260,7 +212,7 @@ async function gptResponde(instruccion, historial = []) {
       ...historial.slice(-6), // últimas 6 interacciones para contexto
       { role: "user", content: instruccion },
     ];
- 
+
     const response = await axios.post(
       "https://api.openai.com/v1/chat/completions",
       {
@@ -282,14 +234,14 @@ async function gptResponde(instruccion, historial = []) {
     return null;
   }
 }
- 
+
 // ============================================================
 // GMAIL - Envío de correo
 // ============================================================
 function encodeSubject(subject) {
   return `=?UTF-8?B?${Buffer.from(subject, "utf8").toString("base64")}?=`;
 }
- 
+
 function base64Url(buffer) {
   return buffer
     .toString("base64")
@@ -297,7 +249,7 @@ function base64Url(buffer) {
     .replace(/\//g, "_")
     .replace(/=+$/, "");
 }
- 
+
 async function getGmailAccessToken() {
   const response = await axios.post("https://oauth2.googleapis.com/token", {
     client_id: GMAIL_CLIENT_ID,
@@ -307,54 +259,40 @@ async function getGmailAccessToken() {
   });
   return response.data.access_token;
 }
- 
+
 function buildEmailBody(data) {
-  return `SOLICITUD DE PROCEDIMIENTO — DR. CRISTIÁN SANDOVAL VERGÉS
- 
- 
-👤  DATOS DEL PACIENTE
- 
-  Nombre       : ${data.nombre     || "-"}
-  Edad         : ${data.edad       ? `${data.edad} años` : "-"}
-  RUT          : ${data.rut        || "-"}
-  Teléfono     : ${data.telefono   || "-"}
-  Correo       : ${data.correo     || "-"}
-  Previsión    : ${data.prevision  || "-"}${data.isapre ? ` (${data.isapre})` : ""}
- 
- 
-🔬  PROCEDIMIENTO SOLICITADO
- 
-  Procedimiento  : ${data.procedimiento  || "-"}
-  Sede           : ${data.sede           || "-"}
-  Fecha preferida: ${data.fechaPreferida || "-"}
- 
- 
-🩺  ENCUESTA CLÍNICA
- 
-  Alérgico al látex    : ${data.latex           || "-"}
-  Anticoagulantes      : ${data.anticoagulantes  || "-"}
-  Análogos GLP-1       : ${data.glp1            || "-"}
-  Marcapasos           : ${data.marcapasos      || "-"}
- 
- 
-⚠️  IMPORTANTE
- 
-Esta solicitud NO constituye un agendamiento definitivo.
- 
-El equipo deberá contactar al paciente para confirmar:
-  • Disponibilidad final
-  • Presupuesto y aranceles
-  • Indicaciones de preparación
-  • Agendamiento definitivo
- 
-El paciente será contactado desde el área de presupuestos
-a la brevedad para coordinar los detalles.`;
+  return `Nueva solicitud de procedimiento endoscópico
+${"=".repeat(50)}
+
+DATOS DEL PACIENTE
+Nombre completo : ${data.nombre     || "-"}
+Edad            : ${data.edad       ? `${data.edad} años` : "-"}
+RUT             : ${data.rut        || "-"}
+Teléfono        : ${data.telefono   || "-"}
+Correo          : ${data.correo     || "-"}
+Previsión       : ${data.prevision  || "-"}${data.isapre ? ` (${data.isapre})` : ""}
+
+PROCEDIMIENTO
+Procedimiento   : ${data.procedimiento  || "-"}
+Sede            : ${data.sede           || "-"}
+Fecha preferida : ${data.fechaPreferida || "-"}
+
+ENCUESTA CLÍNICA
+Alérgico al látex    : ${data.latex           || "-"}
+Usa anticoagulantes  : ${data.anticoagulantes  || "-"}
+Usa GLP-1            : ${data.glp1            || "-"}
+Tiene marcapasos     : ${data.marcapasos      || "-"}
+
+${"=".repeat(50)}
+IMPORTANTE
+Esta solicitud NO constituye agendamiento definitivo.
+Debe ser revisada y confirmada por el equipo humano correspondiente.`;
 }
- 
+
 function buildRawEmail({ from, to, cc, bcc, subject, body, attachment }) {
   const boundary = `boundary_${Date.now()}`;
   const headers = [
-    `From: Asistente Dr. Sandoval (No Reply) <${from}>`,
+    `From: No Reply Gastroenterologos.cl <${from}>`,
     `To: ${to}`,
     cc  ? `Cc: ${cc}`   : null,
     bcc ? `Bcc: ${bcc}` : null,
@@ -362,47 +300,38 @@ function buildRawEmail({ from, to, cc, bcc, subject, body, attachment }) {
     "MIME-Version: 1.0",
     `Content-Type: multipart/mixed; boundary="${boundary}"`,
   ].filter(Boolean);
- 
+
   const parts = [
     `--${boundary}\nContent-Type: text/plain; charset="UTF-8"\nContent-Transfer-Encoding: 7bit\n\n${body}`,
   ];
- 
+
   if (attachment?.buffer) {
     parts.push(
       `--${boundary}\nContent-Type: ${attachment.mimeType || "image/jpeg"}; name="orden_medica.jpg"\nContent-Disposition: attachment; filename="orden_medica.jpg"\nContent-Transfer-Encoding: base64\n\n${attachment.buffer.toString("base64")}`
     );
   }
- 
+
   parts.push(`--${boundary}--`);
- 
+
   return base64Url(
     Buffer.from(headers.join("\n") + "\n\n" + parts.join("\n\n"), "utf8")
   );
 }
- 
-const DESTINO_POR_SEDE = {
-  vitacura:      "presupuesto.vitacura@clinicasantamaria.cl",
-  los_dominicos: "presupuesto.losdominicos@clinicasantamaria.cl",
-  bellavista:    "Agendamiento.examenes@clinicasantamaria.cl",
-};
- 
+
 async function sendSolicitudEmail(session) {
   const accessToken = await getGmailAccessToken();
-  const sedeKey = session.data.sedeKey || "los_dominicos";
-  const destinoEmail = DESTINO_POR_SEDE[sedeKey] || DESTINATION_EMAIL;
- 
   const raw = buildRawEmail({
     from:       GMAIL_USER,
-    to:         destinoEmail,
+    to:         DESTINATION_EMAIL,
     cc:         session.data.correo || undefined,
-    bcc:        "Cristian.Sandoval@gastroenterologos.cl",
-    subject:    `Solicitud procedimiento con Dr. Sandoval - ${session.data.procedimiento || "Procedimiento"} - ${session.data.nombre || "Paciente"}`,
+    bcc:        INTERNAL_BCC_EMAIL,
+    subject:    `Nueva solicitud - ${session.data.procedimiento || "Procedimiento"} - ${session.data.nombre || "Paciente"}`,
     body:       buildEmailBody(session.data),
     attachment: session.data.ordenMedicaBuffer
       ? { buffer: session.data.ordenMedicaBuffer, mimeType: session.data.ordenMedicaMimeType }
       : null,
   });
- 
+
   await axios.post(
     "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
     { raw },
@@ -414,7 +343,7 @@ async function sendSolicitudEmail(session) {
     }
   );
 }
- 
+
 // ============================================================
 // WHATSAPP - Enviar mensaje
 // ============================================================
@@ -434,7 +363,7 @@ async function sendWhatsAppMessage(to, message) {
     }
   );
 }
- 
+
 // ============================================================
 // DESCARGAR MEDIA DE WHATSAPP
 // ============================================================
@@ -452,77 +381,73 @@ async function downloadWhatsAppMedia(mediaId) {
     mimeType: mediaInfo.data.mime_type || "image/jpeg",
   };
 }
- 
+
 // ============================================================
 // MENSAJES FIJOS DEL FLUJO
 // ============================================================
 function msgMenuPrincipal() {
   return `👋 Hola, soy el asistente virtual del *Dr. Cristián Sandoval Vergés – Gastroenterólogo*.
- 
+
 Te ayudaré a orientar tu solicitud.
- 
+
 ¿Qué necesitas?
- 
+
 1️⃣ Consulta médica
 2️⃣ Procedimientos endoscópicos
 3️⃣ Tengo otra duda`;
 }
- 
+
 function msgSedeConsulta() {
   return `¿Prefieres agendar tu consulta en:
- 
+
 1️⃣ Clínica Alemana Osorno (presencial)
 2️⃣ Clínica Santa María (presencial)
 3️⃣ gastroenterologos.cl (telemedicina)
 4️⃣ Volver al menú principal`;
 }
- 
+
 function msgInfoClinicaAlemana() {
   return `Puedes agendar tu consulta presencial en *Clínica Alemana Osorno* por:
- 
+
 📞 Call center: 600 401 5007
 🌐 Web: https://www.clinicaalemanaosorno.cl/informacion-al-paciente/reserva-hora/
- 
+
 ¿Necesitas algo más? Escribe *menú* para volver al inicio.`;
 }
- 
+
 function msgInfoClinicaSantaMaria() {
   return `Puedes agendar tu consulta presencial en *Clínica Santa María* por:
- 
+
 📞 Call center: +56 2 2913 0000
 💬 WhatsApp: +56 2 2914 2472
 🌐 Web: https://www.clinicasantamaria.cl/reserva-de-horas
 🏥 También puedes ir directamente de forma presencial
- 
+
 ¿Necesitas algo más? Escribe *menú* para volver al inicio.`;
 }
- 
+
 function msgInfoGastroWeb() {
   return `Puedes agendar tu consulta de *telemedicina* (primera consulta o control) directamente en:
- 
+
 🌐 https://gastroenterologos.cl/dr-cristian-sandoval-verges/
- 
+
 Esta modalidad es externa a Clínica Santa María.
- 
+
 ¿Necesitas algo más? Escribe *menú* para volver al inicio.`;
 }
- 
+
 function msgTipoProcedimiento() {
-  return `Te ayudaremos a encontrar una fecha disponible para iniciar tu *solicitud de agendamiento*.
- 
-_Ten en cuenta que esto no constituye un agendamiento definitivo. El equipo humano confirmará disponibilidad, presupuesto y preparación una vez recibida tu solicitud._
- 
-¿Qué procedimiento necesitas?
- 
+  return `¿Qué procedimiento necesitas?
+
 1️⃣ Endoscopía digestiva alta
 2️⃣ Colonoscopía completa
 3️⃣ Colonoscopía larga + endoscopía digestiva alta
 4️⃣ Otros procedimientos`;
 }
- 
+
 function msgOtrosProcedimientos() {
   return `Selecciona el procedimiento:
- 
+
 1️⃣ Polipectomía baja
 2️⃣ Polipectomía alta
 3️⃣ Colonoscopía corta
@@ -530,98 +455,88 @@ function msgOtrosProcedimientos() {
 5️⃣ Terapia argón plasma
 6️⃣ Volver`;
 }
- 
+
 function msgTieneOrden() {
   return `¿Tienes *orden médica* para el procedimiento?
- 
+
 1️⃣ Sí
-2️⃣ No
- 
-_Te recomendamos tener tu orden a mano, ya que más adelante deberás fotografiarla o adjuntarla para completar tu solicitud._`;
+2️⃣ No`;
 }
- 
+
 function msgSinOrden() {
   return `Para realizar este procedimiento necesitas primero una *orden médica*.
- 
+
 Debes agendar una consulta médica para evaluación:
- 
+
 1️⃣ Clínica Alemana Osorno (presencial)
 2️⃣ Clínica Santa María (presencial)
 3️⃣ gastroenterologos.cl (telemedicina)
 4️⃣ Agendaré cuando tenga mi orden médica`;
 }
- 
+
 function msgSedeProcedimiento(sedesDisponibles) {
   const opciones = sedesDisponibles.map((s, i) => {
     const info = DISPONIBILIDAD_BASE[s];
     return `${i + 1}️⃣ ${nombreSede(s)} → ${info.dia} ${info.horario}`;
   });
-  opciones.push(`${sedesDisponibles.length + 1}️⃣ Ver todos los días disponibles (próximos 30 días)`);
- 
+  opciones.push(`${sedesDisponibles.length + 1}️⃣ Cualquiera`);
+
   return `¿En qué sede prefieres el procedimiento?\n\n${opciones.join("\n")}`;
 }
- 
+
 async function msgFechas(sede) {
   const info = DISPONIBILIDAD_BASE[sede];
   if (!info) return "No hay disponibilidad base para esa sede.";
- 
-  const fechas = proximosDias(info.dia, 4, sede);
- 
+
+  const fechasBase = proximosDias(info.dia, 4);
+
   // Intentar cruzar con Google Sheet
   let notaSheet = "";
   const sheetData = await getDisponibilidadSheet();
   if (sheetData && sheetData.length > 0) {
     notaSheet = "\n\n_Disponibilidad confirmada según agenda actualizada._";
   }
- 
-  const opciones = fechas.map((f, i) => `${i + 1}️⃣ ${f.label}`).join("\n");
- 
-  return `Estas son las próximas fechas disponibles en *${nombreSede(sede)}*:
- 
+
+  const opciones = fechasBase.map((f, i) => `${i + 1}️⃣ ${f}`).join("\n");
+
+  return `Estas son las próximas fechas disponibles en *${nombreSede(sede)}* (${info.dia}):
+
 ${opciones}
-5️⃣ Otra fecha${notaSheet}
- 
+5️⃣ Otra fecha
+6️⃣ Cualquiera${notaSheet}
+
 Elige una opción:`;
 }
- 
-function msgTodasLasFechas(sedesKeys) {
-  const fechas = todasLasFechas30Dias(sedesKeys);
-  if (fechas.length === 0) return "No hay fechas disponibles en los próximos 30 días.";
- 
-  const opciones = fechas.map((f, i) => `${i + 1}️⃣ ${f.label}`).join("\n");
- 
-  return `Fechas disponibles en los *próximos 30 días*:\n\n${opciones}\n\nElige una opción:`;
-}
- 
+
 function msgResumenFinal(data) {
   return `📋 *Resumen de tu solicitud:*
- 
+
 👤 *Paciente:* ${data.nombre || "-"}
 🎂 *Edad:* ${data.edad ? `${data.edad} años` : "-"}
 🪪 *RUT:* ${data.rut || "-"}
 📞 *Teléfono:* ${data.telefono || "-"}
 📧 *Correo:* ${data.correo || "-"}
 🏥 *Previsión:* ${data.prevision || "-"}${data.isapre ? ` (${data.isapre})` : ""}
- 
+
 🔬 *Procedimiento:* ${data.procedimiento || "-"}
 📍 *Sede:* ${data.sede || "-"}
 📅 *Fecha preferida:* ${data.fechaPreferida || "-"}
- 
+
 ⚠️ _Esta solicitud NO constituye un agendamiento definitivo._
 El equipo humano se contactará contigo para confirmar disponibilidad, presupuesto y preparación.
- 
+
 ¿Deseas *enviar tu solicitud*?
- 
+
 1️⃣ Sí, enviar
 2️⃣ No, cancelar`;
 }
- 
+
 // ============================================================
 // LÓGICA DE FLUJO PRINCIPAL
 // ============================================================
 async function procesarMensaje(from, text, session) {
   const t = cleanText(text);
- 
+
   // ── MENÚ PRINCIPAL ──────────────────────────────────────
   if (session.step === STEPS.MENU_PRINCIPAL) {
     if (t === "1") {
@@ -638,7 +553,7 @@ async function procesarMensaje(from, text, session) {
     }
     return msgMenuPrincipal();
   }
- 
+
   // ── SEDE CONSULTA ────────────────────────────────────────
   if (session.step === STEPS.SEDE_CONSULTA) {
     if (t === "1") { session.step = STEPS.MENU_PRINCIPAL; return msgInfoClinicaAlemana(); }
@@ -647,7 +562,7 @@ async function procesarMensaje(from, text, session) {
     if (t === "4") { session.step = STEPS.MENU_PRINCIPAL; return msgMenuPrincipal(); }
     return msgSedeConsulta();
   }
- 
+
   // ── TIPO PROCEDIMIENTO ───────────────────────────────────
   if (session.step === STEPS.TIPO_PROCEDIMIENTO) {
     const procedimientos = {
@@ -667,7 +582,7 @@ async function procesarMensaje(from, text, session) {
     }
     return msgTipoProcedimiento();
   }
- 
+
   // ── TIPO PROCEDIMIENTO OTROS ─────────────────────────────
   if (session.step === STEPS.TIPO_PROCEDIMIENTO_OTROS) {
     const otros = {
@@ -689,7 +604,7 @@ async function procesarMensaje(from, text, session) {
     }
     return msgOtrosProcedimientos();
   }
- 
+
   // ── TIENE ORDEN ──────────────────────────────────────────
   if (session.step === STEPS.TIENE_ORDEN) {
     if (t === "1") {
@@ -702,7 +617,7 @@ async function procesarMensaje(from, text, session) {
     }
     return msgTieneOrden();
   }
- 
+
   // ── SIN ORDEN ────────────────────────────────────────────
   if (session.step === STEPS.SIN_ORDEN_CONSULTA) {
     if (t === "1") { session.step = STEPS.MENU_PRINCIPAL; return msgInfoClinicaAlemana(); }
@@ -711,7 +626,7 @@ async function procesarMensaje(from, text, session) {
     if (t === "4") { session.step = STEPS.MENU_PRINCIPAL; return "Perfecto. Cuando tengas tu orden médica, escribe *menú* para comenzar de nuevo. ¡Que te mejores pronto! 🙏"; }
     return msgSinOrden();
   }
- 
+
   // ── DATOS PERSONALES ─────────────────────────────────────
   if (session.step === STEPS.NOMBRE) {
     if (text.trim().length < 3) return "Por favor ingresa tu *nombre completo*.";
@@ -719,7 +634,7 @@ async function procesarMensaje(from, text, session) {
     session.step = STEPS.EDAD;
     return "¿Cuál es tu *edad*?";
   }
- 
+
   if (session.step === STEPS.EDAD) {
     const edad = parseInt(text.trim());
     if (isNaN(edad) || edad < 1 || edad > 120) return "Por favor ingresa tu *edad* en años (solo número).";
@@ -727,14 +642,14 @@ async function procesarMensaje(from, text, session) {
     session.step = STEPS.RUT;
     return "¿Cuál es tu *RUT*? (ej: 12.345.678-9)";
   }
- 
+
   if (session.step === STEPS.RUT) {
     if (text.trim().length < 7) return "Por favor ingresa un *RUT válido*.";
     session.data.rut = text.trim();
     session.step = STEPS.TELEFONO;
     return "¿Cuál es tu *número de teléfono*?";
   }
- 
+
   if (session.step === STEPS.TELEFONO) {
     const formateado = formatearTelefono(text.trim());
     if (!formateado) return "Por favor ingresa un *teléfono válido* (ej: 9 9783 0139).";
@@ -742,7 +657,7 @@ async function procesarMensaje(from, text, session) {
     session.step = STEPS.CONFIRMAR_TELEFONO;
     return `¿Tu número es *${formateado}*?\n\n1️⃣ Sí, es correcto\n2️⃣ No, corregir`;
   }
- 
+
   if (session.step === STEPS.CONFIRMAR_TELEFONO) {
     if (t === "1") {
       session.data.telefono = session.data.telefonoTemp;
@@ -755,14 +670,14 @@ async function procesarMensaje(from, text, session) {
     }
     return `¿Tu número es *${session.data.telefonoTemp}*?\n\n1️⃣ Sí, es correcto\n2️⃣ No, corregir`;
   }
- 
+
   if (session.step === STEPS.CORREO) {
     if (!text.includes("@") || !text.includes(".")) return "Por favor ingresa un *correo electrónico válido*.";
     session.data.correoTemp = text.trim().toLowerCase();
     session.step = STEPS.CONFIRMAR_CORREO;
     return `¿Tu correo es *${session.data.correoTemp}*?\n\n1️⃣ Sí, es correcto\n2️⃣ No, corregir`;
   }
- 
+
   if (session.step === STEPS.CONFIRMAR_CORREO) {
     if (t === "1") {
       session.data.correo = session.data.correoTemp;
@@ -775,17 +690,17 @@ async function procesarMensaje(from, text, session) {
     }
     return `¿Tu correo es *${session.data.correoTemp}*?\n\n1️⃣ Sí, es correcto\n2️⃣ No, corregir`;
   }
- 
+
   // ── PREVISIÓN ────────────────────────────────────────────
   if (session.step === STEPS.PREVISION) {
-    if (t === "1") { session.data.prevision = "Fonasa"; session.step = STEPS.LATEX; }
+    if (t === "1") { session.data.prevision = "Fonasa";    session.step = STEPS.SEDE_PROCEDIMIENTO; }
     else if (t === "2") { session.data.prevision = "Isapre"; session.step = STEPS.ISAPRE; }
-    else if (t === "3") { session.data.prevision = "Particular"; session.step = STEPS.LATEX; }
+    else if (t === "3") { session.data.prevision = "Particular"; session.step = STEPS.SEDE_PROCEDIMIENTO; }
     else return `¿Cuál es tu *previsión*?\n\n1️⃣ Fonasa\n2️⃣ Isapre\n3️⃣ Particular`;
- 
+
     if (session.step === STEPS.ISAPRE) {
       return `Selecciona tu *Isapre*:
- 
+
 1️⃣ Banmédica
 2️⃣ Colmena
 3️⃣ Consalud
@@ -796,126 +711,103 @@ async function procesarMensaje(from, text, session) {
 8️⃣ Fundación
 9️⃣ Otra`;
     }
-    return `¿Eres *alérgico al látex*?\n\n1️⃣ Sí\n2️⃣ No`;
+
+    // Si no es Isapre, ir directo a sede
+    return msgSedeProcedimiento(SEDES_POR_PROCEDIMIENTO[session.data.procedimientoKey] || Object.keys(DISPONIBILIDAD_BASE));
   }
- 
+
   // ── ISAPRE ───────────────────────────────────────────────
   if (session.step === STEPS.ISAPRE) {
     const isapres = { "1":"Banmédica","2":"Colmena","3":"Consalud","4":"Cruz Blanca","5":"Nueva Masvida","6":"Vida Tres","7":"Esencial","8":"Fundación","9":"Otra" };
     if (isapres[t]) {
       session.data.isapre = isapres[t];
-      session.step = STEPS.LATEX;
-      return `¿Eres *alérgico al látex*?\n\n1️⃣ Sí\n2️⃣ No`;
+      session.step = STEPS.SEDE_PROCEDIMIENTO;
+      const sedes = SEDES_POR_PROCEDIMIENTO[session.data.procedimientoKey] || Object.keys(DISPONIBILIDAD_BASE);
+      return msgSedeProcedimiento(sedes);
     }
     return `Selecciona tu Isapre (1-9):`;
   }
- 
+
   // ── SEDE PROCEDIMIENTO ───────────────────────────────────
   if (session.step === STEPS.SEDE_PROCEDIMIENTO) {
-    let sedes = SEDES_POR_PROCEDIMIENTO[session.data.procedimientoKey] || Object.keys(DISPONIBILIDAD_BASE);
- 
-    // Si tiene marcapasos, excluir Vitacura
-    if (session.data.marcapasos === "Sí") {
-      sedes = sedes.filter(s => s !== "vitacura");
-    }
- 
-    const verTodosIdx = (sedes.length + 1).toString();
- 
-    if (t === verTodosIdx) {
+    const sedes = SEDES_POR_PROCEDIMIENTO[session.data.procedimientoKey] || Object.keys(DISPONIBILIDAD_BASE);
+    const cualquieraIdx = (sedes.length + 1).toString();
+
+    if (t === cualquieraIdx) {
       session.data.sede = "Cualquiera";
-      session.data.sedeKey = "todas";
-      session.data.sedesDisponibles = sedes;
+      session.data.sedeKey = "los_dominicos"; // Para calcular fechas, usar primera opción
       session.step = STEPS.FECHA;
-      return msgTodasLasFechas(sedes);
+      return await msgFechas("los_dominicos");
     }
- 
+
     const idx = parseInt(t) - 1;
     if (idx >= 0 && idx < sedes.length) {
       session.data.sedeKey = sedes[idx];
       session.data.sede = nombreSede(sedes[idx]);
-      session.data.sedesDisponibles = [sedes[idx]];
       session.step = STEPS.FECHA;
       return await msgFechas(sedes[idx]);
     }
- 
+
     return msgSedeProcedimiento(sedes);
   }
- 
+
   // ── FECHA ────────────────────────────────────────────────
   if (session.step === STEPS.FECHA) {
-    const sedeKey = session.data.sedeKey;
-    const esTodasLasSedes = sedeKey === "todas";
-    const sedes = session.data.sedesDisponibles || [sedeKey];
- 
-    if (esTodasLasSedes) {
-      // Modo "ver todos los días" — lista completa de 30 días
-      const fechas = todasLasFechas30Dias(sedes);
+    const sedeKey = session.data.sedeKey || "los_dominicos";
+    const fechasBase = proximosDias(DISPONIBILIDAD_BASE[sedeKey]?.dia || "lunes", 4);
+    const cualquieraIdx = "6";
+    const otraIdx = "5";
+
+    if (t === cualquieraIdx) {
+      session.data.fechaPreferida = "Cualquiera";
+    } else if (t === otraIdx) {
+      session.data.fechaPreferida = "A coordinar";
+    } else {
       const idx = parseInt(t) - 1;
-      if (idx >= 0 && idx < fechas.length) {
-        session.data.fechaPreferida = `${fechas[idx].label}`;
-        session.data.sede = fechas[idx].sede;
+      if (idx >= 0 && idx < fechasBase.length) {
+        session.data.fechaPreferida = fechasBase[idx];
       } else if (text.trim().length >= 8) {
+        // Acepta fecha escrita manualmente
         session.data.fechaPreferida = text.trim();
       } else {
-        return msgTodasLasFechas(sedes);
-      }
-    } else {
-      // Modo sede específica — próximas 4 fechas
-      const fechas = proximosDias(DISPONIBILIDAD_BASE[sedeKey]?.dia || "lunes", 4, sedeKey);
-      const otraIdx = "5";
- 
-      if (t === otraIdx) {
-        session.data.fechaPreferida = "A coordinar";
-      } else {
-        const idx = parseInt(t) - 1;
-        if (idx >= 0 && idx < fechas.length) {
-          session.data.fechaPreferida = fechas[idx].label;
-        } else if (text.trim().length >= 8) {
-          session.data.fechaPreferida = text.trim();
-        } else {
-          return await msgFechas(sedeKey);
-        }
+        return await msgFechas(sedeKey);
       }
     }
- 
-    session.step = STEPS.ESPERANDO_ORDEN_FOTO;
-    return `Por favor, envía una *foto clara de tu orden médica* 📷\n\n_La imagen se adjuntará a tu solicitud como respaldo._`;
+
+    session.step = STEPS.LATEX;
+    return `¿Eres *alérgico al látex*?\n\n1️⃣ Sí\n2️⃣ No`;
   }
+
+  // ── PREGUNTAS CLÍNICAS ───────────────────────────────────
   if (session.step === STEPS.LATEX) {
     if (t === "1") { session.data.latex = "Sí"; session.step = STEPS.ANTICOAGULANTES; }
     else if (t === "2") { session.data.latex = "No"; session.step = STEPS.ANTICOAGULANTES; }
     else return `¿Eres *alérgico al látex*?\n\n1️⃣ Sí\n2️⃣ No`;
     return `¿Usas *anticoagulantes*?\n\n1️⃣ Sí\n2️⃣ No`;
   }
- 
+
   if (session.step === STEPS.ANTICOAGULANTES) {
     if (t === "1") { session.data.anticoagulantes = "Sí"; session.step = STEPS.GLP1; }
     else if (t === "2") { session.data.anticoagulantes = "No"; session.step = STEPS.GLP1; }
     else return `¿Usas *anticoagulantes*?\n\n1️⃣ Sí\n2️⃣ No`;
-    return `¿Usa *análogos GLP-1*?\n_(Ozempic, Wegovy, Rybelsus, Victoza, Saxenda, Mounjaro, Trulicity, entre otros)_\n\n1️⃣ Sí\n2️⃣ No`;
+    return `¿Usas medicamentos *GLP-1* (como Ozempic o Saxenda)?\n\n1️⃣ Sí\n2️⃣ No`;
   }
- 
+
   if (session.step === STEPS.GLP1) {
     if (t === "1") { session.data.glp1 = "Sí"; session.step = STEPS.MARCAPASOS; }
     else if (t === "2") { session.data.glp1 = "No"; session.step = STEPS.MARCAPASOS; }
     else return `¿Usas medicamentos *GLP-1* (como Ozempic o Saxenda)?\n\n1️⃣ Sí\n2️⃣ No`;
     return `¿Tienes *marcapasos*?\n\n1️⃣ Sí\n2️⃣ No`;
   }
- 
+
   if (session.step === STEPS.MARCAPASOS) {
     if (t === "1") { session.data.marcapasos = "Sí"; }
     else if (t === "2") { session.data.marcapasos = "No"; }
     else return `¿Tienes *marcapasos*?\n\n1️⃣ Sí\n2️⃣ No`;
- 
-    // Ahora sí podemos filtrar sedes con info de marcapasos
-    session.step = STEPS.SEDE_PROCEDIMIENTO;
-    let sedes = SEDES_POR_PROCEDIMIENTO[session.data.procedimientoKey] || Object.keys(DISPONIBILIDAD_BASE);
-    if (session.data.marcapasos === "Sí") {
-      sedes = sedes.filter(s => s !== "vitacura");
-    }
-    return msgSedeProcedimiento(sedes);
+    session.step = STEPS.ESPERANDO_ORDEN_FOTO;
+    return `Por favor, envía una *foto clara de tu orden médica* 📷\n\n_La imagen se adjuntará a tu solicitud como respaldo._`;
   }
- 
+
   // ── OTRA DUDA - MENÚ ─────────────────────────────────────
   if (session.step === STEPS.OTRA_DUDA || session.step === STEPS.OTRA_DUDA_MENU) {
     if (t === "1") {
@@ -938,7 +830,7 @@ async function procesarMensaje(from, text, session) {
     session.step = STEPS.OTRA_DUDA_MENU;
     return `¿En qué puedo ayudarte?\n\n1️⃣ Deseo contactarme\n2️⃣ Solicitar sobrecupo\n3️⃣ Cambiar horas\n4️⃣ Consultar perfil Dr. Sandoval`;
   }
- 
+
   // ── OTRA DUDA - CONTACTO ──────────────────────────────────
   if (session.step === STEPS.OTRA_DUDA_CONTACTO) {
     if (t === "1") {
@@ -959,23 +851,19 @@ async function procesarMensaje(from, text, session) {
     }
     return `¿Con cuál institución deseas contactarte?\n\n1️⃣ Clínica Alemana Osorno\n2️⃣ Clínica Santa María\n3️⃣ gastroenterologos.cl\n4️⃣ Volver`;
   }
- 
+
   // ── CONFIRMAR ENVÍO ───────────────────────────────────────
   if (session.step === STEPS.CONFIRMAR_ENVIO) {
     if (t === "1") {
       try {
         await sendSolicitudEmail(session);
-        const nombre = session.data.nombre?.split(" ")[0] || "Paciente";
+        const correo = session.data.correo || "-";
+        const nombre = session.data.nombre || "Paciente";
         resetSession(from);
-        return `Estimado/a ${nombre}, hemos recibido tu solicitud correctamente.
- 
-El equipo de Clínica Santa María se pondrá en contacto contigo a la brevedad.
- 
-Espera a que se comuniquen vía email para completar tu agendamiento.
- 
-Agradecemos tu confianza con el Dr. Sandoval. ¡Que tengas un excelente día!
- 
-_Fin de la asistencia._`;
+        return await gptResponde(
+          `El paciente ${nombre} acaba de enviar su solicitud correctamente. Su correo es ${correo}. Confirma el envío y despídete cálidamente.`,
+          []
+        ) || `✅ Tu solicitud fue enviada correctamente, ${nombre}.\n\nRecibirás una copia en *${correo}*.\n\nEl equipo humano se pondrá en contacto contigo para confirmar disponibilidad, presupuesto, preparación y agendamiento definitivo. 🙏`;
       } catch (err) {
         console.error("Error enviando email:", err.response?.data || err.message);
         return "⚠️ Hubo un problema al enviar tu solicitud. Por favor intenta nuevamente o escribe a contacto@gastroenterologos.cl directamente.";
@@ -987,16 +875,16 @@ _Fin de la asistencia._`;
     }
     return msgResumenFinal(session.data);
   }
- 
+
   // Fallback
   return msgMenuPrincipal();
 }
- 
+
 // ============================================================
 // WEBHOOK
 // ============================================================
 app.get("/", (req, res) => res.status(200).send("Bot Gastro activo ✅"));
- 
+
 app.get("/webhook", (req, res) => {
   const mode      = req.query["hub.mode"];
   const token     = req.query["hub.verify_token"];
@@ -1006,18 +894,18 @@ app.get("/webhook", (req, res) => {
   }
   return res.sendStatus(403);
 });
- 
+
 app.post("/webhook", async (req, res) => {
   // Responder 200 INMEDIATAMENTE a Meta (evita reintentos)
   res.sendStatus(200);
- 
+
   try {
     const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
     if (!message) return;
- 
+
     const from    = message.from;
     const session = getSession(from);
- 
+
     // ── IMAGEN ────────────────────────────────────────────
     if (message.type === "image") {
       if (session.step !== STEPS.ESPERANDO_ORDEN_FOTO) {
@@ -1031,13 +919,13 @@ app.post("/webhook", async (req, res) => {
       await sendWhatsAppMessage(from, msgResumenFinal(session.data));
       return;
     }
- 
+
     // ── TEXTO ─────────────────────────────────────────────
     if (message.type !== "text") return;
- 
+
     const text = message.text.body;
     const textClean = cleanText(text);
- 
+
     // Detección de riesgo (salud mental)
     const friesgoArr = ["quiero morir", "me quiero matar", "no quiero seguir", "no puedo mas", "no puedo más"];
     if (friesgoArr.some(f => textClean.includes(f))) {
@@ -1046,29 +934,29 @@ app.post("/webhook", async (req, res) => {
       );
       return;
     }
- 
+
     // Comando reset
     if (isResetCommand(textClean)) {
       resetSession(from);
       await sendWhatsAppMessage(from, msgMenuPrincipal());
       return;
     }
- 
+
     // Guardar en historial para GPT
     session.history.push({ role: "user", content: text });
- 
+
     const respuesta = await procesarMensaje(from, text, session);
- 
+
     if (respuesta) {
       session.history.push({ role: "assistant", content: respuesta });
       await sendWhatsAppMessage(from, respuesta);
     }
- 
+
   } catch (error) {
     console.error("Error webhook:", error.response?.data || error.message);
   }
 });
- 
+
 // ============================================================
 // INICIO
 // ============================================================

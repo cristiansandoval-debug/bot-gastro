@@ -190,7 +190,8 @@ function todasLasFechas30Dias(sedesKeys) {
         const m = (fecha.getMonth() + 1).toString().padStart(2, "0");
         const y = fecha.getFullYear();
         resultados.push({
-          label: `${nombresCapitalizados[fecha.getDay()]} ${d}/${m}/${y} — ${nombreSede(sedeKey)} ${etiquetaHorario(sedeKey)}`,
+          label: `${nombresCapitalizados[fecha.getDay()]} ${d}/${m} — ${nombreSede(sedeKey)} ${etiquetaHorario(sedeKey)}`,
+          labelCorto: `${nombresCapitalizados[fecha.getDay()].slice(0,3)} ${d}/${m} ${nombreSede(sedeKey).slice(0,3)} ${etiquetaHorario(sedeKey)}`,
           fecha: `${d}/${m}/${y}`,
           sede: nombreSede(sedeKey),
           sedeKey
@@ -208,7 +209,17 @@ function todasLasFechas30Dias(sedesKeys) {
   });
 }
 
-function nombreSede(key) {
+function nombreSedecorto(key) {
+  const nombres = {
+    vitacura: "Vitacura",
+    los_dominicos: "Los Dominicos",
+    bellavista: "Bellavista",
+  };
+  return nombres[key] || key;
+}
+
+function nombreSedeLabel(key) {
+  // Versión corta para listas interactivas (max 24 chars total con fecha)
   const nombres = {
     vitacura: "Vitacura",
     los_dominicos: "Los Dominicos",
@@ -721,7 +732,7 @@ async function enviarTipoProcedimiento(to) {
     [
       { id: "1", title: "Endoscopía alta" },
       { id: "2", title: "Colonoscopía" },
-      { id: "3", title: "Colonoscopía + Endoscopía" },
+      { id: "3", title: "Colonoscopía + Endoscopia" },
       { id: "4", title: "Otros procedimientos" },
     ],
     "Ver opciones"
@@ -803,10 +814,18 @@ async function enviarSedeProcedimiento(to, sedes) {
 async function enviarFechas(to, sedeKey) {
   const info = DISPONIBILIDAD_BASE[sedeKey];
   const fechas = proximosDias(info.dia, 4, sedeKey);
-  const items = fechas.map((f, i) => ({ id: (i + 1).toString(), title: f.label }));
-  items.push({ id: "5", title: "📅 Otra fecha" });
+  const items = fechas.map((f, i) => {
+    const partes = f.label.split(" ");
+    // partes: ["Miércoles", "14/05/2026", "(p.m.)"]
+    return {
+      id: (i + 1).toString(),
+      title: `${partes[0]} ${partes[1]}`,
+      description: partes[2] || ""
+    };
+  });
+  items.push({ id: "5", title: "Otra fecha" });
   await sendWhatsAppList(to,
-    `Próximas fechas disponibles en *${nombreSede(sedeKey)}*:`,
+    `Proximas fechas en ${nombreSede(sedeKey)}:`,
     items,
     "Ver fechas"
   );
@@ -815,11 +834,14 @@ async function enviarFechas(to, sedeKey) {
 async function enviarTodasLasFechas(to, sedes) {
   const fechas = todasLasFechas30Dias(sedes);
   if (fechas.length === 0) { await sendWhatsAppMessage(to, "No hay fechas disponibles en los próximos 30 días."); return; }
-  // Lista máximo 10 items — dividir en secciones si hay más
-  const items = fechas.slice(0, 10).map((f, i) => ({
-    id: (i + 1).toString(),
-    title: `${f.label}`
-  }));
+  const items = fechas.slice(0, 10).map((f, i) => {
+    const partes = f.label.split(" — ");
+    return {
+      id: (i + 1).toString(),
+      title: partes[0] || f.label,
+      description: partes[1] || ""
+    };
+  });
   await sendWhatsAppList(to, "Fechas disponibles en los proximos 30 días:", items, "Ver fechas");
 }
 
@@ -1271,7 +1293,7 @@ app.post("/webhook", async (req, res) => {
       session.data.ordenMedicaBuffer   = media.buffer;
       session.data.ordenMedicaMimeType = media.mimeType;
       session.step = STEPS.CONFIRMAR_ENVIO;
-      await sendWhatsAppMessage(from, msgResumenFinal(session.data));
+      await enviarConfirmarEnvio(from, session.data);
       return;
     }
 

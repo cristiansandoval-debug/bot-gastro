@@ -903,7 +903,7 @@ async function enviarConfirmarEnvio(to, data) {
 // ============================================================
 // LÓGICA DE FLUJO PRINCIPAL
 // ============================================================
-async function procesarMensaje(from, text, session) {
+async function procesarMensaje(from, text, session, message = null) {
   const t = cleanText(text);
 
   // ── MENÚ PRINCIPAL ──────────────────────────────────────
@@ -985,6 +985,7 @@ async function procesarMensaje(from, text, session) {
 
   // ── DATOS PERSONALES ─────────────────────────────────────
   if (session.step === STEPS.NOMBRE) {
+    if (message?.type === "interactive") { return "¿Cuál es tu *nombre completo*?"; }
     if (text.trim().length < 3) return "Por favor ingresa tu *nombre completo*.";
     session.data.nombre = text.trim();
     session.step = STEPS.EDAD;
@@ -992,6 +993,8 @@ async function procesarMensaje(from, text, session) {
   }
 
   if (session.step === STEPS.EDAD) {
+    // Ignorar si es respuesta de botón/lista (IDs cortos como "1","2")
+    if (message?.type === "interactive") { return "¿Cuál es tu *edad*?"; }
     const edad = parseInt(text.trim());
     if (isNaN(edad) || edad < 1 || edad > 120) return "Por favor ingresa tu *edad* en años (solo número).";
     session.data.edad = edad;
@@ -1000,6 +1003,7 @@ async function procesarMensaje(from, text, session) {
   }
 
   if (session.step === STEPS.RUT) {
+    if (message?.type === "interactive") { return "¿Cuál es tu *RUT*? (ej: 12.345.678-9)"; }
     if (text.trim().length < 7) return "Por favor ingresa un *RUT válido*.";
     session.data.rut = text.trim();
     session.step = STEPS.TELEFONO;
@@ -1029,6 +1033,7 @@ async function procesarMensaje(from, text, session) {
   }
 
   if (session.step === STEPS.CORREO) {
+    if (message?.type === "interactive") { return "¿Cuál es tu *correo electrónico*?"; }
     if (!text.includes("@") || !text.includes(".")) return "Por favor ingresa un *correo electrónico válido*.";
     session.data.correoTemp = text.trim().toLowerCase();
     session.step = STEPS.CONFIRMAR_CORREO;
@@ -1384,8 +1389,8 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    // Ignorar mensajes duplicados por tiempo (Meta a veces envía 2 veces)
-    if (esMensajeDuplicadoPorTiempo(from)) return;
+    // Ignorar mensajes interactivos duplicados por tiempo (Meta envía 2 veces)
+    if (message.type === "interactive" && esMensajeDuplicadoPorTiempo(from)) return;
 
     // ── IMAGEN ────────────────────────────────────────────
     if (message.type === "image") {
@@ -1448,7 +1453,7 @@ app.post("/webhook", async (req, res) => {
     // Guardar en historial para GPT
     session.history.push({ role: "user", content: text });
 
-    const respuesta = await procesarMensaje(from, text, session);
+    const respuesta = await procesarMensaje(from, text, session, message);
 
     if (respuesta) {
       console.log(`✅ [${from}] Respuesta enviada | Nuevo step: ${session.step}`);

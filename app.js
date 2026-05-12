@@ -223,13 +223,24 @@ function nombreSede(key) {
 // DEDUPLICACIÓN DE MENSAJES
 // ============================================================
 const mensajesProcesados = new Set();
+const ultimoMensajePorUsuario = new Map();
 
 function yaFueProcesado(messageId) {
   if (!messageId) return false;
   if (mensajesProcesados.has(messageId)) return true;
   mensajesProcesados.add(messageId);
-  // Limpiar después de 5 minutos para no acumular memoria
   setTimeout(() => mensajesProcesados.delete(messageId), 5 * 60 * 1000);
+  return false;
+}
+
+function esMensajeDuplicadoPorTiempo(from) {
+  const ahora = Date.now();
+  const ultimo = ultimoMensajePorUsuario.get(from) || 0;
+  if (ahora - ultimo < 1500) {
+    console.log(`⚠️ [${from}] Mensaje duplicado por tiempo ignorado`);
+    return true;
+  }
+  ultimoMensajePorUsuario.set(from, ahora);
   return false;
 }
 async function getDisponibilidadSheet() {
@@ -1366,12 +1377,15 @@ app.post("/webhook", async (req, res) => {
     const from    = message.from;
     const session = getSession(from);
 
-    // Ignorar mensajes duplicados
+    // Ignorar mensajes duplicados por ID
     const messageId = message.id;
     if (yaFueProcesado(messageId)) {
       console.log(`⚠️ [${from}] Mensaje duplicado ignorado: ${messageId}`);
       return;
     }
+
+    // Ignorar mensajes duplicados por tiempo (Meta a veces envía 2 veces)
+    if (esMensajeDuplicadoPorTiempo(from)) return;
 
     // ── IMAGEN ────────────────────────────────────────────
     if (message.type === "image") {

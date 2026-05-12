@@ -721,7 +721,7 @@ async function enviarTipoProcedimiento(to) {
     [
       { id: "1", title: "Endoscopía alta" },
       { id: "2", title: "Colonoscopía" },
-      { id: "3", title: "Colonoscopía + EDA" },
+      { id: "3", title: "Colonoscopía + Endoscopía" },
       { id: "4", title: "Otros procedimientos" },
     ],
     "Ver opciones"
@@ -1283,6 +1283,7 @@ app.post("/webhook", async (req, res) => {
     if (message.type === "interactive") {
       // Botón o lista — extraer el ID seleccionado
       const interactive = message.interactive;
+      console.log(`🔍 [${from}] Interactive type: ${interactive.type} | payload: ${JSON.stringify(interactive).slice(0, 150)}`);
       if (interactive.type === "button_reply") {
         text = interactive.button_reply.id;
       } else if (interactive.type === "list_reply") {

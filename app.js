@@ -54,6 +54,7 @@ const STEPS = {
   MARCAPASOS:            "marcapasos",
   ESPERANDO_ORDEN_FOTO:  "esperando_orden_foto",
   CONFIRMAR_ENVIO:       "confirmar_envio",
+  FECHA_SIGUIENTE:       "fecha_siguiente",
   // Flujo otra duda
   OTRA_DUDA:             "otra_duda",
   OTRA_DUDA_MENU:        "otra_duda_menu",
@@ -735,7 +736,7 @@ async function enviarTipoProcedimiento(to) {
     [
       { id: "1", title: "Endoscopía alta" },
       { id: "2", title: "Colonoscopía" },
-      { id: "3", title: "Colonoscopía + Endoscopia" },
+      { id: "3", title: "Colonoscopía+Endoscopia" },
       { id: "4", title: "Otros procedimientos" },
     ],
     "Ver opciones"
@@ -814,19 +815,26 @@ async function enviarSedeProcedimiento(to, sedes) {
   await sendWhatsAppList(to, "¿En qué sede prefieres el procedimiento?", items, "Ver sedes");
 }
 
-async function enviarFechas(to, sedeKey) {
+async function enviarFechas(to, sedeKey, offset = 0) {
   const info = DISPONIBILIDAD_BASE[sedeKey];
-  const fechas = proximosDias(info.dia, 4, sedeKey);
-  const items = fechas.map((f, i) => {
+  const fechas = proximosDias(info.dia, 8, sedeKey); // calcular 8 para tener más páginas
+  const pagina = fechas.slice(offset, offset + 4);
+  const items = pagina.map((f, i) => {
     const partes = f.label.split(" ");
-    // partes: ["Miércoles", "14/05/2026", "(p.m.)"]
     return {
       id: (i + 1).toString(),
       title: `${partes[0]} ${partes[1]}`,
       description: partes[2] || ""
     };
   });
-  items.push({ id: "5", title: "Otra fecha" });
+  // Botón siguiente si hay más fechas
+  if (offset + 4 < fechas.length) {
+    items.push({ id: "sig", title: "Ver más fechas ▶" });
+  }
+  // Botón atrás si no es la primera página
+  if (offset > 0) {
+    items.push({ id: "ant", title: "◀ Atrás" });
+  }
   await sendWhatsAppList(to,
     `Proximas fechas en ${nombreSede(sedeKey)}:`,
     items,
@@ -1163,10 +1171,25 @@ async function procesarMensaje(from, text, session) {
   }
 
   // ── FECHA ────────────────────────────────────────────────
-  if (session.step === STEPS.FECHA) {
+  if (session.step === STEPS.FECHA || session.step === STEPS.FECHA_SIGUIENTE) {
     const sedeKey = session.data.sedeKey;
     const esTodasLasSedes = sedeKey === "todas";
     const sedes = session.data.sedesDisponibles || [sedeKey];
+    const offset = session.data.fechaOffset || 0;
+
+    // Navegación paginada
+    if (t === "sig") {
+      session.data.fechaOffset = offset + 4;
+      session.step = STEPS.FECHA_SIGUIENTE;
+      await enviarFechas(from, sedeKey, session.data.fechaOffset);
+      return null;
+    }
+    if (t === "ant") {
+      session.data.fechaOffset = Math.max(0, offset - 4);
+      session.step = session.data.fechaOffset === 0 ? STEPS.FECHA : STEPS.FECHA_SIGUIENTE;
+      await enviarFechas(from, sedeKey, session.data.fechaOffset);
+      return null;
+    }
 
     if (esTodasLasSedes) {
       const fechas = todasLasFechas30Dias(sedes);
@@ -1182,22 +1205,20 @@ async function procesarMensaje(from, text, session) {
         return null;
       }
     } else {
-      const fechas = proximosDias(DISPONIBILIDAD_BASE[sedeKey]?.dia || "lunes", 4, sedeKey);
-      if (t === "5") {
-        session.data.fechaPreferida = "A coordinar";
+      const fechas = proximosDias(DISPONIBILIDAD_BASE[sedeKey]?.dia || "lunes", 8, sedeKey);
+      const pagina = fechas.slice(offset, offset + 4);
+      const idx = parseInt(t) - 1;
+      if (idx >= 0 && idx < pagina.length) {
+        session.data.fechaPreferida = pagina[idx].label;
+      } else if (text.trim().length >= 8) {
+        session.data.fechaPreferida = text.trim();
       } else {
-        const idx = parseInt(t) - 1;
-        if (idx >= 0 && idx < fechas.length) {
-          session.data.fechaPreferida = fechas[idx].label;
-        } else if (text.trim().length >= 8) {
-          session.data.fechaPreferida = text.trim();
-        } else {
-          await enviarFechas(from, sedeKey);
-          return null;
-        }
+        await enviarFechas(from, sedeKey, offset);
+        return null;
       }
     }
 
+    session.data.fechaOffset = 0; // reset para próxima vez
     session.step = STEPS.ESPERANDO_ORDEN_FOTO;
     return `Por favor, envía una *foto clara de tu orden médica* 📷\n\n_La imagen se adjuntará a tu solicitud como respaldo._`;
   }
@@ -1206,15 +1227,15 @@ async function procesarMensaje(from, text, session) {
   if (session.step === STEPS.OTRA_DUDA || session.step === STEPS.OTRA_DUDA_MENU) {
     if (t === "1") { session.step = STEPS.OTRA_DUDA_CONTACTO; await enviarOtraDudaContacto(from); return null; }
     if (t === "2") {
-      session.step = STEPS.OTRA_DUDA_SOBRECUPO;
+      session.step = STEPS.OTRA_DUDA_MENU;
       return `Los sobrecupos se gestionan de la siguiente forma:\n\n🏥 *Clínica Santa María:* solo de forma *presencial* en la clínica.\n\n🌐 *gastroenterologos.cl:* escribe a 📧 info@gastroenterologos.cl\n\nEscribe *menú* para volver al inicio.`;
     }
     if (t === "3") {
-      session.step = STEPS.MENU_PRINCIPAL;
+      session.step = STEPS.OTRA_DUDA_MENU;
       return `Para *cambios de hora* o cancelaciones:\n\n🏥 *Clínica Alemana Osorno:* 📞 600 401 5007 o presencial.\n\n🏥 *Clínica Santa María:* 📞 +56 2 2913 0000, 💬 WhatsApp +56 2 2914 2472 o presencial.\n\n🌐 *gastroenterologos.cl:* 📧 info@gastroenterologos.cl\n\nEscribe *menú* para volver al inicio.`;
     }
     if (t === "4") {
-      session.step = STEPS.MENU_PRINCIPAL;
+      session.step = STEPS.OTRA_DUDA_MENU;
       return `Aquí puedes revisar el perfil del *Dr. Cristián Sandoval Vergés*:\n\n🌐 https://gastroenterologos.cl/dr-cristian-sandoval-verges/\n\nEscribe *menú* si necesitas algo más.`;
     }
     await enviarOtraDudaMenu(from);
@@ -1250,8 +1271,38 @@ async function procesarMensaje(from, text, session) {
     return null;
   }
 
-  // Fallback
-  await enviarMenuPrincipal(from);
+  // Fallback inteligente — vuelve al step actual
+  console.log(`⚠️ [${from}] Fallback en step: ${session.step} | t: "${t}"`);
+  switch (session.step) {
+    case STEPS.MENU_PRINCIPAL:       await enviarMenuPrincipal(from); break;
+    case STEPS.SEDE_CONSULTA:        await enviarSedeConsulta(from); break;
+    case STEPS.TIPO_PROCEDIMIENTO:   await enviarTipoProcedimiento(from); break;
+    case STEPS.TIPO_PROCEDIMIENTO_OTROS: await enviarOtrosProcedimientos(from); break;
+    case STEPS.TIENE_ORDEN:          await enviarTieneOrden(from); break;
+    case STEPS.SIN_ORDEN_CONSULTA:   await enviarSinOrden(from); break;
+    case STEPS.LATEX:                await enviarLatex(from); break;
+    case STEPS.ANTICOAGULANTES:      await enviarAnticoagulantes(from); break;
+    case STEPS.GLP1:                 await enviarGlp1(from); break;
+    case STEPS.MARCAPASOS:           await enviarMarcapasos(from); break;
+    case STEPS.SEDE_PROCEDIMIENTO: {
+      let sedes = SEDES_POR_PROCEDIMIENTO[session.data.procedimientoKey] || Object.keys(DISPONIBILIDAD_BASE);
+      if (session.data.marcapasos === "Sí") sedes = sedes.filter(s => s !== "vitacura");
+      await enviarSedeProcedimiento(from, sedes);
+      break;
+    }
+    case STEPS.FECHA:
+    case STEPS.FECHA_SIGUIENTE:
+      if (session.data.sedeKey === "todas") await enviarTodasLasFechas(from, session.data.sedesDisponibles);
+      else await enviarFechas(from, session.data.sedeKey, session.data.fechaOffset || 0);
+      break;
+    case STEPS.ESPERANDO_ORDEN_FOTO:
+      return `Por favor, envía una *foto clara de tu orden médica* 📷\n\n_La imagen se adjuntará a tu solicitud como respaldo._`;
+    case STEPS.CONFIRMAR_ENVIO:      await enviarConfirmarEnvio(from, session.data); break;
+    case STEPS.OTRA_DUDA_MENU:
+    case STEPS.OTRA_DUDA:            await enviarOtraDudaMenu(from); break;
+    case STEPS.OTRA_DUDA_CONTACTO:   await enviarOtraDudaContacto(from); break;
+    default:                         await enviarMenuPrincipal(from); break;
+  }
   return null;
 }
 

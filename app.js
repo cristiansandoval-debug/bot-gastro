@@ -692,7 +692,7 @@ El equipo humano se contactará contigo para confirmar disponibilidad, presupues
 // ============================================================
 async function enviarMenuPrincipal(to) {
   await sendWhatsAppList(to,
-    `👋 Hola, soy el asistente virtual del *Dr. Cristián Sandoval Vergés – Gastroenterólogo*.\n\nTe ayudaré a orientar tu solicitud. ¿Qué necesitas?`,
+    `👋 Hola, soy el asistente virtual del Dr. Cristián Sandoval Vergés – Gastroenterólogo.\n\nTe ayudaré a orientar tu solicitud. ¿Qué necesitas?`,
     [
       { id: "1", title: "🏥 Consulta médica" },
       { id: "2", title: "🔬 Procedimientos" },
@@ -717,7 +717,7 @@ async function enviarSedeConsulta(to) {
 
 async function enviarTipoProcedimiento(to) {
   await sendWhatsAppList(to,
-    `Te ayudaremos a encontrar una fecha disponible para iniciar tu *solicitud de agendamiento*.\n\n_Esto no constituye un agendamiento definitivo._\n\n¿Qué procedimiento necesitas?`,
+    `Te ayudaremos a encontrar una fecha disponible para iniciar tu solicitud de agendamiento.\n\nEsto no constituye un agendamiento definitivo.\n\n¿Qué procedimiento necesitas?`,
     [
       { id: "1", title: "Endoscopía alta" },
       { id: "2", title: "Colonoscopía" },
@@ -745,14 +745,14 @@ async function enviarOtrosProcedimientos(to) {
 
 async function enviarTieneOrden(to) {
   await sendWhatsAppButtons(to,
-    `¿Tienes *orden médica* para el procedimiento?\n\n_Te recomendamos tenerla a mano, ya que deberás fotografiarla más adelante._`,
+    `¿Tienes orden médica para el procedimiento?\n\nTe recomendamos tenerla a mano, ya que deberás fotografiarla más adelante.`,
     [{ id: "1", title: "✅ Sí" }, { id: "2", title: "❌ No" }]
   );
 }
 
 async function enviarSinOrden(to) {
   await sendWhatsAppList(to,
-    "Para realizar este procedimiento necesitas primero una *orden médica*.\n\nDebes agendar una consulta médica para evaluación:",
+    "Para realizar este procedimiento necesitas primero una orden médica.\n\nDebes agendar una consulta médica para evaluación:",
     [
       { id: "1", title: "Clínica Alemana", description: "Presencial - Osorno" },
       { id: "2", title: "Clínica Santa María", description: "Presencial" },
@@ -779,7 +779,7 @@ async function enviarAnticoagulantes(to) {
 
 async function enviarGlp1(to) {
   await sendWhatsAppButtons(to,
-    "¿Usas *análogos GLP-1*?\n_(Ozempic, Wegovy, Rybelsus, Victoza, Saxenda, Mounjaro, Trulicity, entre otros)_",
+    "¿Usas análogos GLP-1?\n(Ozempic, Wegovy, Rybelsus, Victoza, Saxenda, Mounjaro, Trulicity, entre otros)",
     [{ id: "1", title: "✅ Sí" }, { id: "2", title: "❌ No" }]
   );
 }
@@ -820,7 +820,7 @@ async function enviarTodasLasFechas(to, sedes) {
     id: (i + 1).toString(),
     title: `${f.label}`
   }));
-  await sendWhatsAppList(to, "Fechas disponibles en los *próximos 30 días*:", items, "Ver fechas");
+  await sendWhatsAppList(to, "Fechas disponibles en los proximos 30 días:", items, "Ver fechas");
 }
 
 async function enviarOtraDudaMenu(to) {
@@ -850,7 +850,7 @@ async function enviarOtraDudaContacto(to) {
 }
 
 async function enviarConfirmarEnvio(to, data) {
-  const resumen = `📋 *Resumen de tu solicitud:*\n\n👤 *Paciente:* ${data.nombre || "-"}\n🎂 *Edad:* ${data.edad ? `${data.edad} años` : "-"}\n🪪 *RUT:* ${data.rut || "-"}\n📞 *Teléfono:* ${data.telefono || "-"}\n📧 *Correo:* ${data.correo || "-"}\n🏥 *Previsión:* ${data.prevision || "-"}${data.isapre ? ` (${data.isapre})` : ""}\n\n🔬 *Procedimiento:* ${data.procedimiento || "-"}\n📍 *Sede:* ${data.sede || "-"}\n📅 *Fecha preferida:* ${data.fechaPreferida || "-"}\n\n⚠️ _Esta solicitud NO constituye un agendamiento definitivo._`;
+  const resumen = `📋 Resumen de tu solicitud:\n\n👤 Paciente: ${data.nombre || "-"}\n🎂 Edad: ${data.edad ? `${data.edad} años` : "-"}\n🪪 RUT: ${data.rut || "-"}\n📞 Teléfono: ${data.telefono || "-"}\n📧 Correo: ${data.correo || "-"}\n🏥 Previsión: ${data.prevision || "-"}${data.isapre ? ` (${data.isapre})` : ""}\n\n🔬 Procedimiento: ${data.procedimiento || "-"}\n📍 Sede: ${data.sede || "-"}\n📅 Fecha preferida: ${data.fechaPreferida || "-"}\n\n⚠️ Esta solicitud NO constituye un agendamiento definitivo.`;
   await sendWhatsAppButtons(to, resumen,
     [{ id: "1", title: "✅ Enviar" }, { id: "2", title: "❌ Cancelar" }]
   );

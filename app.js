@@ -219,8 +219,18 @@ function nombreSede(key) {
 }
 
 // ============================================================
-// GOOGLE SHEETS - Leer disponibilidad real
+// DEDUPLICACIÓN DE MENSAJES
 // ============================================================
+const mensajesProcesados = new Set();
+
+function yaFueProcesado(messageId) {
+  if (!messageId) return false;
+  if (mensajesProcesados.has(messageId)) return true;
+  mensajesProcesados.add(messageId);
+  // Limpiar después de 5 minutos para no acumular memoria
+  setTimeout(() => mensajesProcesados.delete(messageId), 5 * 60 * 1000);
+  return false;
+}
 async function getDisponibilidadSheet() {
   if (!GOOGLE_SHEET_ID || !GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_PRIVATE_KEY) {
     return null; // Si no está configurado, retorna null (usa solo base)
@@ -575,6 +585,9 @@ function msgInfoGastroWeb() {
 🌐 https://gastroenterologos.cl/dr-cristian-sandoval-verges/
 
 Esta modalidad es externa a Clínica Santa María.
+
+Si no hay horas disponibles y necesitas un *sobrecupo*, escribe a:
+📧 info@gastroenterologos.cl
 
 ¿Necesitas algo más? Escribe *menú* para volver al inicio.`;
 }
@@ -1271,6 +1284,13 @@ app.post("/webhook", async (req, res) => {
 
     const from    = message.from;
     const session = getSession(from);
+
+    // Ignorar mensajes duplicados
+    const messageId = message.id;
+    if (yaFueProcesado(messageId)) {
+      console.log(`⚠️ [${from}] Mensaje duplicado ignorado: ${messageId}`);
+      return;
+    }
 
     // ── IMAGEN ────────────────────────────────────────────
     if (message.type === "image") {

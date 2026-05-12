@@ -479,7 +479,7 @@ async function sendWhatsAppList(to, body, items, buttonText = "Ver opciones", he
       type: "list",
       body: { text: body },
       action: {
-        button: buttonText,
+        button: buttonText.slice(0, 20),
         sections: [{
           title: "Opciones",
           rows: items.map(item => ({
@@ -711,7 +711,7 @@ async function enviarSedeConsulta(to) {
       { id: "3", title: "gastroenterologos.cl", description: "Telemedicina" },
       { id: "4", title: "⬅️ Volver" },
     ],
-    "Seleccionar sede"
+    "Ver sedes"
   );
 }
 
@@ -724,7 +724,7 @@ async function enviarTipoProcedimiento(to) {
       { id: "3", title: "Colonoscopía + EDA" },
       { id: "4", title: "Otros procedimientos" },
     ],
-    "Seleccionar procedimiento"
+    "Ver opciones"
   );
 }
 
@@ -739,7 +739,7 @@ async function enviarOtrosProcedimientos(to) {
       { id: "5", title: "Argón plasma" },
       { id: "6", title: "⬅️ Volver" },
     ],
-    "Seleccionar procedimiento"
+    "Ver opciones"
   );
 }
 
@@ -797,7 +797,7 @@ async function enviarSedeProcedimiento(to, sedes) {
     return { id: (i + 1).toString(), title: nombreSede(s), description: `${info.dia} ${info.horario}` };
   });
   items.push({ id: (sedes.length + 1).toString(), title: "📅 Ver todos" , description: "Ver disponibilidad completa" });
-  await sendWhatsAppList(to, "¿En qué sede prefieres el procedimiento?", items, "Seleccionar sede");
+  await sendWhatsAppList(to, "¿En qué sede prefieres el procedimiento?", items, "Ver sedes");
 }
 
 async function enviarFechas(to, sedeKey) {
@@ -808,7 +808,7 @@ async function enviarFechas(to, sedeKey) {
   await sendWhatsAppList(to,
     `Próximas fechas disponibles en *${nombreSede(sedeKey)}*:`,
     items,
-    "Seleccionar fecha"
+    "Ver fechas"
   );
 }
 
@@ -820,7 +820,7 @@ async function enviarTodasLasFechas(to, sedes) {
     id: (i + 1).toString(),
     title: `${f.label}`
   }));
-  await sendWhatsAppList(to, "Fechas disponibles en los *próximos 30 días*:", items, "Seleccionar fecha");
+  await sendWhatsAppList(to, "Fechas disponibles en los *próximos 30 días*:", items, "Ver fechas");
 }
 
 async function enviarOtraDudaMenu(to) {
@@ -845,7 +845,7 @@ async function enviarOtraDudaContacto(to) {
       { id: "3", title: "gastroenterologos.cl" },
       { id: "4", title: "⬅️ Volver" },
     ],
-    "Seleccionar"
+    "Ver opciones"
   );
 }
 
@@ -1006,7 +1006,7 @@ async function procesarMensaje(from, text, session) {
           { id: "2", title: "Isapre" },
           { id: "3", title: "Particular" },
         ],
-        "Seleccionar previsión"
+        "Ver previsión"
       );
       return null;
     }
@@ -1026,7 +1026,7 @@ async function procesarMensaje(from, text, session) {
     else {
       await sendWhatsAppList(from, "¿Cuál es tu previsión?",
         [{ id: "1", title: "Fonasa" }, { id: "2", title: "Isapre" }, { id: "3", title: "Particular" }],
-        "Seleccionar previsión"
+        "Ver previsión"
       );
       return null;
     }
@@ -1044,7 +1044,7 @@ async function procesarMensaje(from, text, session) {
           { id: "8", title: "Fundación" },
           { id: "9", title: "Otra" },
         ],
-        "Seleccionar Isapre"
+        "Ver Isapres"
       );
       return null;
     }
@@ -1069,7 +1069,7 @@ async function procesarMensaje(from, text, session) {
         { id: "7", title: "Esencial" }, { id: "8", title: "Fundación" },
         { id: "9", title: "Otra" },
       ],
-      "Seleccionar Isapre"
+      "Ver Isapres"
     );
     return null;
   }

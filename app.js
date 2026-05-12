@@ -1280,6 +1280,36 @@ async function procesarMensaje(from, text, session) {
     case STEPS.TIPO_PROCEDIMIENTO_OTROS: await enviarOtrosProcedimientos(from); break;
     case STEPS.TIENE_ORDEN:          await enviarTieneOrden(from); break;
     case STEPS.SIN_ORDEN_CONSULTA:   await enviarSinOrden(from); break;
+    case STEPS.NOMBRE:               return "¿Cuál es tu *nombre completo*?";
+    case STEPS.EDAD:                 return "¿Cuál es tu *edad*?";
+    case STEPS.RUT:                  return "¿Cuál es tu *RUT*? (ej: 12.345.678-9)";
+    case STEPS.TELEFONO:             return "¿Cuál es tu *número de teléfono*?";
+    case STEPS.CONFIRMAR_TELEFONO:
+      await sendWhatsAppButtons(from,
+        `¿Tu número es *${session.data.telefonoTemp}*?`,
+        [{ id: "1", title: "✅ Sí, correcto" }, { id: "2", title: "✏️ Corregir" }]
+      ); break;
+    case STEPS.CORREO:               return "¿Cuál es tu *correo electrónico*?";
+    case STEPS.CONFIRMAR_CORREO:
+      await sendWhatsAppButtons(from,
+        `¿Tu correo es *${session.data.correoTemp}*?`,
+        [{ id: "1", title: "✅ Sí, correcto" }, { id: "2", title: "✏️ Corregir" }]
+      ); break;
+    case STEPS.PREVISION:
+      await sendWhatsAppList(from, "¿Cuál es tu previsión?",
+        [{ id: "1", title: "Fonasa" }, { id: "2", title: "Isapre" }, { id: "3", title: "Particular" }],
+        "Ver previsión"
+      ); break;
+    case STEPS.ISAPRE:
+      await sendWhatsAppList(from, "Selecciona tu Isapre:",
+        [
+          { id: "1", title: "Banmédica" }, { id: "2", title: "Colmena" },
+          { id: "3", title: "Consalud" }, { id: "4", title: "Cruz Blanca" },
+          { id: "5", title: "Nueva Masvida" }, { id: "6", title: "Vida Tres" },
+          { id: "7", title: "Esencial" }, { id: "8", title: "Fundación" },
+          { id: "9", title: "Otra" },
+        ], "Ver Isapres"
+      ); break;
     case STEPS.LATEX:                await enviarLatex(from); break;
     case STEPS.ANTICOAGULANTES:      await enviarAnticoagulantes(from); break;
     case STEPS.GLP1:                 await enviarGlp1(from); break;

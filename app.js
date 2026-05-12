@@ -706,10 +706,10 @@ async function enviarSedeConsulta(to) {
   await sendWhatsAppList(to,
     "¿Prefieres agendar tu consulta en:",
     [
-      { id: "1", title: "Clínica Alemana Osorno", description: "Presencial" },
+      { id: "1", title: "Clínica Alemana", description: "Presencial - Osorno" },
       { id: "2", title: "Clínica Santa María", description: "Presencial" },
       { id: "3", title: "gastroenterologos.cl", description: "Telemedicina" },
-      { id: "4", title: "⬅️ Volver al menú" },
+      { id: "4", title: "⬅️ Volver" },
     ],
     "Seleccionar sede"
   );
@@ -719,9 +719,9 @@ async function enviarTipoProcedimiento(to) {
   await sendWhatsAppList(to,
     `Te ayudaremos a encontrar una fecha disponible para iniciar tu *solicitud de agendamiento*.\n\n_Esto no constituye un agendamiento definitivo._\n\n¿Qué procedimiento necesitas?`,
     [
-      { id: "1", title: "Endoscopía digestiva alta" },
-      { id: "2", title: "Colonoscopía completa" },
-      { id: "3", title: "Colonoscopía larga + EDA" },
+      { id: "1", title: "Endoscopía alta" },
+      { id: "2", title: "Colonoscopía" },
+      { id: "3", title: "Colonoscopía + EDA" },
       { id: "4", title: "Otros procedimientos" },
     ],
     "Seleccionar procedimiento"
@@ -746,7 +746,7 @@ async function enviarOtrosProcedimientos(to) {
 async function enviarTieneOrden(to) {
   await sendWhatsAppButtons(to,
     `¿Tienes *orden médica* para el procedimiento?\n\n_Te recomendamos tenerla a mano, ya que deberás fotografiarla más adelante._`,
-    [{ id: "1", title: "✅ Sí tengo" }, { id: "2", title: "❌ No tengo" }]
+    [{ id: "1", title: "✅ Sí" }, { id: "2", title: "❌ No" }]
   );
 }
 
@@ -754,7 +754,7 @@ async function enviarSinOrden(to) {
   await sendWhatsAppList(to,
     "Para realizar este procedimiento necesitas primero una *orden médica*.\n\nDebes agendar una consulta médica para evaluación:",
     [
-      { id: "1", title: "Clínica Alemana Osorno", description: "Presencial" },
+      { id: "1", title: "Clínica Alemana", description: "Presencial - Osorno" },
       { id: "2", title: "Clínica Santa María", description: "Presencial" },
       { id: "3", title: "gastroenterologos.cl", description: "Telemedicina" },
       { id: "4", title: "Agendaré después" },
@@ -796,7 +796,7 @@ async function enviarSedeProcedimiento(to, sedes) {
     const info = DISPONIBILIDAD_BASE[s];
     return { id: (i + 1).toString(), title: nombreSede(s), description: `${info.dia} ${info.horario}` };
   });
-  items.push({ id: (sedes.length + 1).toString(), title: "📅 Ver todos (30 días)" });
+  items.push({ id: (sedes.length + 1).toString(), title: "📅 Ver todos" , description: "Ver disponibilidad completa" });
   await sendWhatsAppList(to, "¿En qué sede prefieres el procedimiento?", items, "Seleccionar sede");
 }
 
@@ -827,10 +827,10 @@ async function enviarOtraDudaMenu(to) {
   await sendWhatsAppList(to,
     "¿En qué puedo ayudarte?",
     [
-      { id: "1", title: "📞 Deseo contactarme" },
-      { id: "2", title: "📋 Solicitar sobrecupo" },
+      { id: "1", title: "📞 Contactarme" },
+      { id: "2", title: "📋 Sobrecupo" },
       { id: "3", title: "🔄 Cambiar horas" },
-      { id: "4", title: "👨‍⚕️ Perfil Dr. Sandoval" },
+      { id: "4", title: "Perfil Dr. Sandoval" , description: "gastroenterologos.cl" },
     ],
     "Ver opciones"
   );
@@ -840,7 +840,7 @@ async function enviarOtraDudaContacto(to) {
   await sendWhatsAppList(to,
     "¿Con cuál institución deseas contactarte?",
     [
-      { id: "1", title: "Clínica Alemana Osorno" },
+      { id: "1", title: "Clínica Alemana" },
       { id: "2", title: "Clínica Santa María" },
       { id: "3", title: "gastroenterologos.cl" },
       { id: "4", title: "⬅️ Volver" },
@@ -852,7 +852,7 @@ async function enviarOtraDudaContacto(to) {
 async function enviarConfirmarEnvio(to, data) {
   const resumen = `📋 *Resumen de tu solicitud:*\n\n👤 *Paciente:* ${data.nombre || "-"}\n🎂 *Edad:* ${data.edad ? `${data.edad} años` : "-"}\n🪪 *RUT:* ${data.rut || "-"}\n📞 *Teléfono:* ${data.telefono || "-"}\n📧 *Correo:* ${data.correo || "-"}\n🏥 *Previsión:* ${data.prevision || "-"}${data.isapre ? ` (${data.isapre})` : ""}\n\n🔬 *Procedimiento:* ${data.procedimiento || "-"}\n📍 *Sede:* ${data.sede || "-"}\n📅 *Fecha preferida:* ${data.fechaPreferida || "-"}\n\n⚠️ _Esta solicitud NO constituye un agendamiento definitivo._`;
   await sendWhatsAppButtons(to, resumen,
-    [{ id: "1", title: "✅ Sí, enviar" }, { id: "2", title: "❌ No, cancelar" }]
+    [{ id: "1", title: "✅ Enviar" }, { id: "2", title: "❌ Cancelar" }]
   );
 }
 
@@ -969,7 +969,7 @@ async function procesarMensaje(from, text, session) {
     session.step = STEPS.CONFIRMAR_TELEFONO;
     await sendWhatsAppButtons(from,
       `¿Tu número es *${formateado}*?`,
-      [{ id: "1", title: "✅ Sí, es correcto" }, { id: "2", title: "✏️ No, corregir" }]
+      [{ id: "1", title: "✅ Sí, correcto" }, { id: "2", title: "✏️ Corregir" }]
     );
     return null;
   }
@@ -979,7 +979,7 @@ async function procesarMensaje(from, text, session) {
     if (t === "2") { session.step = STEPS.TELEFONO; return "Ingresa tu *número de teléfono* nuevamente:"; }
     await sendWhatsAppButtons(from,
       `¿Tu número es *${session.data.telefonoTemp}*?`,
-      [{ id: "1", title: "✅ Sí, es correcto" }, { id: "2", title: "✏️ No, corregir" }]
+      [{ id: "1", title: "✅ Sí, correcto" }, { id: "2", title: "✏️ Corregir" }]
     );
     return null;
   }
@@ -990,7 +990,7 @@ async function procesarMensaje(from, text, session) {
     session.step = STEPS.CONFIRMAR_CORREO;
     await sendWhatsAppButtons(from,
       `¿Tu correo es *${session.data.correoTemp}*?`,
-      [{ id: "1", title: "✅ Sí, es correcto" }, { id: "2", title: "✏️ No, corregir" }]
+      [{ id: "1", title: "✅ Sí, correcto" }, { id: "2", title: "✏️ Corregir" }]
     );
     return null;
   }
@@ -1013,7 +1013,7 @@ async function procesarMensaje(from, text, session) {
     if (t === "2") { session.step = STEPS.CORREO; return "Ingresa tu *correo electrónico* nuevamente:"; }
     await sendWhatsAppButtons(from,
       `¿Tu correo es *${session.data.correoTemp}*?`,
-      [{ id: "1", title: "✅ Sí, es correcto" }, { id: "2", title: "✏️ No, corregir" }]
+      [{ id: "1", title: "✅ Sí, correcto" }, { id: "2", title: "✏️ Corregir" }]
     );
     return null;
   }

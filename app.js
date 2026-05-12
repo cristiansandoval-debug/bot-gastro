@@ -209,17 +209,7 @@ function todasLasFechas30Dias(sedesKeys) {
   });
 }
 
-function nombreSedecorto(key) {
-  const nombres = {
-    vitacura: "Vitacura",
-    los_dominicos: "Los Dominicos",
-    bellavista: "Bellavista",
-  };
-  return nombres[key] || key;
-}
-
-function nombreSedeLabel(key) {
-  // Versión corta para listas interactivas (max 24 chars total con fecha)
+function nombreSede(key) {
   const nombres = {
     vitacura: "Vitacura",
     los_dominicos: "Los Dominicos",

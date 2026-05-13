@@ -121,18 +121,18 @@ function isResetCommand(text) {
   return ["reiniciar", "comenzar de nuevo", "inicio", "menu", "menú", "reset", "volver", "salir"].includes(text);
 }
 
-// Formatea teléfono chileno a +56 9 123 45 67
+// Formatea teléfono chileno a +56 9 1234 5678
 function formatearTelefono(raw) {
   let digits = raw.replace(/\D/g, "");
   if (digits.startsWith("56")) digits = digits.slice(2);
   if (digits.startsWith("0")) digits = digits.slice(1);
   if (digits.length === 9) {
-    // +56 9 123 45 67
-    return `+56 ${digits.slice(0,1)} ${digits.slice(1,4)} ${digits.slice(4,6)} ${digits.slice(6)}`;
+    // +56 9 1234 5678
+    return `+56 ${digits.slice(0,1)} ${digits.slice(1,5)} ${digits.slice(5)}`;
   }
   if (digits.length === 8) {
-    // +56 22 123 45 67
-    return `+56 ${digits.slice(0,2)} ${digits.slice(2,5)} ${digits.slice(5,7)} ${digits.slice(7)}`;
+    // +56 22 1234 567
+    return `+56 ${digits.slice(0,2)} ${digits.slice(2,6)} ${digits.slice(6)}`;
   }
   return null;
 }
@@ -203,7 +203,7 @@ function todasLasFechas30Dias(sedesKeys) {
         const m = (fecha.getMonth() + 1).toString().padStart(2, "0");
         const y = fecha.getFullYear();
         resultados.push({
-          label: `${nombresCapitalizados[fecha.getDay()]} ${d}/${m} — ${nombreSede(sedeKey)} ${etiquetaHorario(sedeKey)}`,
+          label: `${nombresCapitalizados[fecha.getDay()]} ${d}/${m}/${y} — ${nombreSede(sedeKey)} ${etiquetaHorario(sedeKey)}`,
           labelCorto: `${nombresCapitalizados[fecha.getDay()].slice(0,3)} ${d}/${m} ${nombreSede(sedeKey).slice(0,3)} ${etiquetaHorario(sedeKey)}`,
           fecha: `${d}/${m}/${y}`,
           sede: nombreSede(sedeKey),
@@ -907,7 +907,7 @@ async function enviarOtraDudaContacto(to) {
 }
 
 async function enviarConfirmarEnvio(to, data) {
-  const resumen = `📋 Resumen de tu solicitud:\n\n👤 Paciente: ${data.nombre || "-"}\n🎂 Edad: ${data.edad ? `${data.edad} años` : "-"}\n🪪 RUT: ${data.rut || "-"}\n📞 Teléfono: ${data.telefono || "-"}\n📧 Correo: ${data.correo || "-"}\n🏥 Previsión: ${data.prevision || "-"}${data.isapre ? ` (${data.isapre})` : ""}\n\n🔬 Procedimiento: ${data.procedimiento || "-"}\n📍 Sede: ${data.sede || "-"}\n📅 Fecha preferida: ${data.fechaPreferida || "-"}\n\n⚠️ Esta solicitud NO constituye un agendamiento definitivo.`;
+  const resumen = `📋 Resumen de tu solicitud:\n\n👤 Paciente: ${data.nombre || "-"}\n🎂 Edad: ${data.edad ? `${data.edad} años` : "-"}\n🪪 RUT: ${data.rut || "-"}\n📞 Teléfono: ${data.telefono || "-"}\n📧 Correo: ${data.correo || "-"}\n🏥 Previsión: ${data.prevision || "-"}${data.isapre ? ` (${data.isapre})` : ""}\n\n🔬 Procedimiento: ${data.procedimiento || "-"}\n📍 Sede: ${data.sede || "-"}\n📅 Fecha preferida: ${data.fechaPreferida || "-"}\n\n⚠️ Esta solicitud NO constituye un agendamiento definitivo.\n\nEl equipo humano se pondrá en contacto contigo a la brevedad para continuar y finalizar el agendamiento, donde se te entregará presupuesto, hora exacta e indicaciones para el examen.`;
   await sendWhatsAppButtons(to, resumen,
     [{ id: "1", title: "✅ Enviar" }, { id: "2", title: "❌ Cancelar" }]
   );

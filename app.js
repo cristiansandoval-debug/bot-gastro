@@ -121,18 +121,30 @@ function isResetCommand(text) {
   return ["reiniciar", "comenzar de nuevo", "inicio", "menu", "menú", "reset", "volver", "salir"].includes(text);
 }
 
-// Formatea teléfono chileno a +56 9 XXXX XXXX
+// Formatea teléfono chileno a +56 9 123 45 67
 function formatearTelefono(raw) {
   let digits = raw.replace(/\D/g, "");
   if (digits.startsWith("56")) digits = digits.slice(2);
   if (digits.startsWith("0")) digits = digits.slice(1);
   if (digits.length === 9) {
-    return `+56 ${digits.slice(0,1)} ${digits.slice(1,5)} ${digits.slice(5)}`;
+    // +56 9 123 45 67
+    return `+56 ${digits.slice(0,1)} ${digits.slice(1,4)} ${digits.slice(4,6)} ${digits.slice(6)}`;
   }
   if (digits.length === 8) {
-    return `+56 ${digits.slice(0,2)} ${digits.slice(2,6)} ${digits.slice(6)}`;
+    // +56 22 123 45 67
+    return `+56 ${digits.slice(0,2)} ${digits.slice(2,5)} ${digits.slice(5,7)} ${digits.slice(7)}`;
   }
   return null;
+}
+
+// Formatea RUT chileno sin puntos y con guión: 12345678-9
+function formatearRut(raw) {
+  // Eliminar todo excepto dígitos y K/k
+  let clean = raw.replace(/[^0-9kK]/g, "").toUpperCase();
+  if (clean.length < 2) return null;
+  const cuerpo = clean.slice(0, -1);
+  const dv = clean.slice(-1);
+  return `${cuerpo}-${dv}`;
 }
 
 // Calcula los próximos N días de la semana, devuelve {label, fecha}
@@ -750,7 +762,8 @@ async function enviarTipoProcedimiento(to) {
       { id: "3", title: "Colonoscopía+Endoscopia" },
       { id: "4", title: "Otros procedimientos" },
     ],
-    "Ver opciones"
+    "Ver opciones",
+    "Solicitud - Clínica Santa María"
   );
 }
 
@@ -1003,9 +1016,10 @@ async function procesarMensaje(from, text, session, message = null) {
   }
 
   if (session.step === STEPS.RUT) {
-    if (message?.type === "interactive") { return "¿Cuál es tu *RUT*? (ej: 12.345.678-9)"; }
-    if (text.trim().length < 7) return "Por favor ingresa un *RUT válido*.";
-    session.data.rut = text.trim();
+    if (message?.type === "interactive") { return "¿Cuál es tu *RUT*? (ej: 123456789)"; }
+    const rutFormateado = formatearRut(text.trim());
+    if (!rutFormateado || rutFormateado.length < 4) return "Por favor ingresa un *RUT válido* (ej: 123456789 o 12345678-9).";
+    session.data.rut = rutFormateado;
     session.step = STEPS.TELEFONO;
     return "¿Cuál es tu *número de teléfono*?";
   }

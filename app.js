@@ -1290,7 +1290,7 @@ async function procesarMensaje(from, text, session, message = null) {
         console.log(`📧 [${from}] Solicitud enviada | Paciente: ${session.data.nombre} | Sede: ${session.data.sede} | Procedimiento: ${session.data.procedimiento}`);
         const nombre = session.data.nombre?.split(" ")[0] || "Paciente";
         resetSession(from);
-        return `Estimado/a ${nombre}, hemos recibido tu solicitud correctamente.\n\nEl equipo de Clínica Santa María se pondrá en contacto contigo a la brevedad.\n\nEspera a que se comuniquen vía email para completar tu agendamiento.\n\nAgradecemos tu confianza con el Dr. Sandoval. ¡Que tengas un excelente día!\n\n_Fin de la asistencia._`;
+        return `Estimado/a ${nombre}, hemos recibido tu solicitud correctamente.\n\nEl equipo de Clínica Santa María se pondrá en contacto contigo a la brevedad para continuar y finalizar el agendamiento, donde se te entregará presupuesto, hora exacta e indicaciones para el examen.\n\nAgradecemos tu confianza con el Dr. Sandoval. ¡Que tengas un excelente día!\n\n_Fin de la asistencia._`;
       } catch (err) {
         console.error("Error enviando email:", err.response?.data || err.message);
         return "⚠️ Hubo un problema al enviar tu solicitud. Por favor intenta nuevamente o escribe a contacto@gastroenterologos.cl directamente.";

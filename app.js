@@ -98,8 +98,18 @@ function formatearTelefono(raw) {
   let digits = raw.replace(/\D/g, "");
   if (digits.startsWith("56")) digits = digits.slice(2);
   if (digits.startsWith("0")) digits = digits.slice(1);
-  if (digits.length === 9) return `+56 ${digits.slice(0,1)} ${digits.slice(1,5)} ${digits.slice(5)}`;
-  if (digits.length === 8) return `+56 ${digits.slice(0,2)} ${digits.slice(2,6)} ${digits.slice(6)}`;
+  if (digits.length === 9 && digits.startsWith("9")) {
+    // Móvil chileno correcto: 9XXXXXXXX
+    return `+56 ${digits.slice(0,1)} ${digits.slice(1,5)} ${digits.slice(5)}`;
+  }
+  if (digits.length === 8 && digits.startsWith("9")) {
+    // Le falta el 9 inicial — completar automáticamente
+    digits = "9" + digits;
+    return `+56 ${digits.slice(0,1)} ${digits.slice(1,5)} ${digits.slice(5)}`;
+  }
+  if (digits.length === 9) {
+    return `+56 ${digits.slice(0,1)} ${digits.slice(1,5)} ${digits.slice(5)}`;
+  }
   return null;
 }
 function formatearRut(raw) {

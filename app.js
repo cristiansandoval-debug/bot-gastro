@@ -672,11 +672,13 @@ async function procesarMensaje(from, text, session, message = null) {
       if (sedes.length === 0) sedes = ["bellavista"];
       await sendWhatsAppMessage(from, `ℹ️ Dado que tienes ${edad} años, el procedimiento debe realizarse en *Bellavista*, que cuenta con la infraestructura adecuada para tu caso.`);
     }
+    // Guardar sedes filtradas en sesión para usarlas después
+    session.data.sedesFiltradas = sedes;
     await enviarSedeProcedimiento(from, sedes); return null;
   }
   if (session.step === STEPS.SEDE_PROCEDIMIENTO) {
-    let sedes = SEDES_POR_PROCEDIMIENTO[session.data.procedimientoKey] || Object.keys(DISPONIBILIDAD_BASE);
-    if (session.data.marcapasos === "Sí") sedes = sedes.filter(s => s !== "vitacura");
+    // Usar sedes ya filtradas (por marcapasos y edad)
+    let sedes = session.data.sedesFiltradas || SEDES_POR_PROCEDIMIENTO[session.data.procedimientoKey] || Object.keys(DISPONIBILIDAD_BASE);
     const verTodosIdx = (sedes.length + 1).toString();
     if (t === verTodosIdx) {
       session.data.sede = "Cualquiera"; session.data.sedeKey = "todas"; session.data.sedesDisponibles = sedes;
@@ -767,12 +769,8 @@ async function procesarMensaje(from, text, session, message = null) {
     case STEPS.GLP1:                 await enviarGlp1(from); break;
     case STEPS.MARCAPASOS:           await enviarMarcapasos(from); break;
     case STEPS.SEDE_PROCEDIMIENTO: {
-      let sedes = SEDES_POR_PROCEDIMIENTO[session.data.procedimientoKey] || Object.keys(DISPONIBILIDAD_BASE);
-      if (session.data.marcapasos === "Sí") sedes = sedes.filter(s => s !== "vitacura");
-      const edadF = session.data.edad || 0;
-      if (edadF < 18 || edadF > 80) sedes = sedes.filter(s => s !== "vitacura" && s !== "los_dominicos");
-      if (sedes.length === 0) sedes = ["bellavista"];
-      await enviarSedeProcedimiento(from, sedes); break;
+      const sedesF = session.data.sedesFiltradas || SEDES_POR_PROCEDIMIENTO[session.data.procedimientoKey] || Object.keys(DISPONIBILIDAD_BASE);
+      await enviarSedeProcedimiento(from, sedesF); break;
     }
     case STEPS.FECHA:
     case STEPS.FECHA_SIGUIENTE:

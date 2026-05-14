@@ -388,7 +388,7 @@ async function enviarMenuPrincipal(to) {
   await sendWhatsAppList(to,
     `👋 Hola, soy el asistente virtual del Dr. Cristián Sandoval Vergés – Gastroenterólogo.\n\nTe ayudaré a orientar tu solicitud. ¿Qué necesitas?`,
     [
-      { id: "2", title: "🔬 Procedimientos endoscópicos" },
+      { id: "2", title: "Procedim. endoscópicos" },
       { id: "1", title: "🏥 Consulta médica" },
       { id: "3", title: "❓ Tengo otra duda" },
     ],

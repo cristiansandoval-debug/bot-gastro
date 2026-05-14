@@ -387,7 +387,11 @@ function msgInfoGastroWeb() {
 async function enviarMenuPrincipal(to) {
   await sendWhatsAppList(to,
     `👋 Hola, soy el asistente virtual del Dr. Cristián Sandoval Vergés – Gastroenterólogo.\n\nTe ayudaré a orientar tu solicitud. ¿Qué necesitas?`,
-    [{ id: "1", title: "🏥 Consulta médica" }, { id: "2", title: "🔬 Procedimientos" }, { id: "3", title: "❓ Tengo otra duda" }],
+    [
+      { id: "2", title: "🔬 Procedimientos endoscópicos" },
+      { id: "1", title: "🏥 Consulta médica" },
+      { id: "3", title: "❓ Tengo otra duda" },
+    ],
     "Ver opciones"
   );
 }
@@ -637,9 +641,17 @@ async function procesarMensaje(from, text, session, message = null) {
     await enviarLatex(from); return null;
   }
   if (session.step === STEPS.ANTICOAGULANTES) {
-    if (t === "1") { session.data.anticoagulantes = "Sí"; session.step = STEPS.GLP1; await enviarGlp1(from); return null; }
-    if (t === "2") { session.data.anticoagulantes = "No"; session.step = STEPS.GLP1; await enviarGlp1(from); return null; }
-    await enviarAnticoagulantes(from); return null;
+    if (t === "1") { session.data.anticoagulantes = "Sí"; session.step = STEPS.GLP1; }
+    else if (t === "2") { session.data.anticoagulantes = "No"; session.step = STEPS.GLP1; }
+    else { await enviarAnticoagulantes(from); return null; }
+    // GLP-1 solo aplica a procedimientos de tracto alto
+    const requiereGlp1 = ["endoscopia", "ambos", "ligadura_varices", "polipectomia_alta"];
+    if (!requiereGlp1.includes(session.data.procedimientoKey)) {
+      session.data.glp1 = "No aplica";
+      session.step = STEPS.MARCAPASOS;
+      await enviarMarcapasos(from); return null;
+    }
+    await enviarGlp1(from); return null;
   }
   if (session.step === STEPS.GLP1) {
     if (t === "1") { session.data.glp1 = "Sí"; session.step = STEPS.MARCAPASOS; await enviarMarcapasos(from); return null; }
@@ -653,6 +665,13 @@ async function procesarMensaje(from, text, session, message = null) {
     session.step = STEPS.SEDE_PROCEDIMIENTO;
     let sedes = SEDES_POR_PROCEDIMIENTO[session.data.procedimientoKey] || Object.keys(DISPONIBILIDAD_BASE);
     if (session.data.marcapasos === "Sí") sedes = sedes.filter(s => s !== "vitacura");
+    // Filtro por edad: Los Dominicos y Vitacura solo 18-80 años
+    const edad = session.data.edad || 0;
+    if (edad < 18 || edad > 80) {
+      sedes = sedes.filter(s => s !== "vitacura" && s !== "los_dominicos");
+      if (sedes.length === 0) sedes = ["bellavista"];
+      await sendWhatsAppMessage(from, `ℹ️ Dado que tienes ${edad} años, el procedimiento debe realizarse en *Bellavista*, que cuenta con la infraestructura adecuada para tu caso.`);
+    }
     await enviarSedeProcedimiento(from, sedes); return null;
   }
   if (session.step === STEPS.SEDE_PROCEDIMIENTO) {
@@ -750,6 +769,9 @@ async function procesarMensaje(from, text, session, message = null) {
     case STEPS.SEDE_PROCEDIMIENTO: {
       let sedes = SEDES_POR_PROCEDIMIENTO[session.data.procedimientoKey] || Object.keys(DISPONIBILIDAD_BASE);
       if (session.data.marcapasos === "Sí") sedes = sedes.filter(s => s !== "vitacura");
+      const edadF = session.data.edad || 0;
+      if (edadF < 18 || edadF > 80) sedes = sedes.filter(s => s !== "vitacura" && s !== "los_dominicos");
+      if (sedes.length === 0) sedes = ["bellavista"];
       await enviarSedeProcedimiento(from, sedes); break;
     }
     case STEPS.FECHA:

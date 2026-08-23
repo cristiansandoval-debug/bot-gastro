@@ -55,7 +55,7 @@ const STEPS = {
   CONFIRMAR_CORREO:      "confirmar_correo",
 };
 // ============================================================
-// SEDES Y DISPONIBILIDAD BASE
+// SEDES Y DISPONIBILIDAD BASE (respaldo si el Sheet falla)
 // ============================================================
 const DISPONIBILIDAD_BASE = {
   vitacura:      { dia: "martes",    horario: "08:30 a 12:00" },
@@ -64,13 +64,20 @@ const DISPONIBILIDAD_BASE = {
 };
 const SEDES_POR_PROCEDIMIENTO = {
   endoscopia:     ["vitacura", "los_dominicos", "bellavista"],
-  colonoscopia:   ["los_dominicos", "bellavista"],
-  ambos:          ["los_dominicos", "bellavista"],
+  colonoscopia:   ["vitacura", "los_dominicos", "bellavista"],
+  ambos:          ["vitacura", "los_dominicos", "bellavista"],
   polipectomia_baja:  ["los_dominicos", "bellavista"],
   polipectomia_alta:  ["bellavista"],
-  colonoscopia_corta: ["los_dominicos", "bellavista"],
+  colonoscopia_corta: ["vitacura", "los_dominicos", "bellavista"],
   ligadura_varices:   ["bellavista"],
   argon_plasma:       ["bellavista"],
+};
+// Mapeo de "Centro" del Sheet (Agenda Maestra) a las sedes del bot
+const CENTRO_SEDE_MAP = {
+  "CMV": "vitacura",
+  "CMLD": "los_dominicos",
+  "CSM": "bellavista",
+  "CSM Bellavista": "bellavista",
 };
 // ============================================================
 // SESIONES EN MEMORIA
@@ -99,11 +106,9 @@ function formatearTelefono(raw) {
   if (digits.startsWith("56")) digits = digits.slice(2);
   if (digits.startsWith("0")) digits = digits.slice(1);
   if (digits.length === 9 && digits.startsWith("9")) {
-    // Móvil chileno correcto: 9XXXXXXXX
     return `+56 ${digits.slice(0,1)} ${digits.slice(1,5)} ${digits.slice(5)}`;
   }
   if (digits.length === 8 && digits.startsWith("9")) {
-    // Le falta el 9 inicial — completar automáticamente
     digits = "9" + digits;
     return `+56 ${digits.slice(0,1)} ${digits.slice(1,5)} ${digits.slice(5)}`;
   }
@@ -117,9 +122,9 @@ function formatearRut(raw) {
   if (clean.length < 2) return null;
   return `${clean.slice(0, -1)}-${clean.slice(-1)}`;
 }
+const DIAS_SEMANA = ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
 function proximosDias(diaNombre, cantidad = 4, sedeKey = "los_dominicos") {
   const diasMap = { domingo: 0, lunes: 1, martes: 2, miercoles: 3, miércoles: 3, jueves: 4, viernes: 5, sabado: 6, sábado: 6 };
-  const nombresCapitalizados = ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
   const diaNum = diasMap[diaNombre.toLowerCase()];
   const hoy = new Date();
   const fechas = [];
@@ -131,7 +136,7 @@ function proximosDias(diaNombre, cantidad = 4, sedeKey = "los_dominicos") {
       const m = (fecha.getMonth() + 1).toString().padStart(2, "0");
       const y = fecha.getFullYear();
       fechas.push({
-        label: `${nombresCapitalizados[fecha.getDay()]} ${d}/${m}/${y} ${etiquetaHorario(sedeKey)}`,
+        label: `${DIAS_SEMANA[fecha.getDay()]} ${d}/${m}/${y} ${etiquetaHorario(sedeKey)}`,
         fecha: `${d}/${m}/${y}`
       });
     }
@@ -140,40 +145,6 @@ function proximosDias(diaNombre, cantidad = 4, sedeKey = "los_dominicos") {
 }
 function etiquetaHorario(sedeKey) {
   return sedeKey === "bellavista" ? "(p.m.)" : "(a.m.)";
-}
-function todasLasFechas30Dias(sedesKeys) {
-  const diasMap = { domingo: 0, lunes: 1, martes: 2, miercoles: 3, miércoles: 3, jueves: 4, viernes: 5, sabado: 6, sábado: 6 };
-  const nombresCapitalizados = ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
-  const hoy = new Date();
-  const limite = new Date(hoy);
-  limite.setDate(limite.getDate() + 30);
-  const resultados = [];
-  let fecha = new Date(hoy);
-  fecha.setDate(fecha.getDate() + 1);
-  while (fecha <= limite) {
-    for (const sedeKey of sedesKeys) {
-      const info = DISPONIBILIDAD_BASE[sedeKey];
-      if (!info) continue;
-      const diaNum = diasMap[info.dia.toLowerCase()];
-      if (fecha.getDay() === diaNum) {
-        const d = fecha.getDate().toString().padStart(2, "0");
-        const m = (fecha.getMonth() + 1).toString().padStart(2, "0");
-        const y = fecha.getFullYear();
-        resultados.push({
-          label: `${nombresCapitalizados[fecha.getDay()]} ${d}/${m}/${y} — ${nombreSede(sedeKey)} ${etiquetaHorario(sedeKey)}`,
-          fecha: `${d}/${m}/${y}`,
-          sede: nombreSede(sedeKey),
-          sedeKey
-        });
-      }
-    }
-    fecha.setDate(fecha.getDate() + 1);
-  }
-  return resultados.sort((a, b) => {
-    const [da, ma, ya] = a.fecha.split("/").map(Number);
-    const [db, mb, yb] = b.fecha.split("/").map(Number);
-    return new Date(ya, ma-1, da) - new Date(yb, mb-1, db);
-  });
 }
 function nombreSede(key) {
   const nombres = { vitacura: "Vitacura", los_dominicos: "Los Dominicos", bellavista: "Bellavista" };
@@ -202,19 +173,103 @@ function esMensajeDuplicadoPorTiempo(from) {
   return false;
 }
 // ============================================================
-// GOOGLE SHEETS
+// GOOGLE SHEETS — Bloques de procedimientos (Agenda Maestra)
 // ============================================================
-async function getDisponibilidadSheet() {
+let bloquesCache = { data: null, timestamp: 0 };
+const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutos
+
+async function getBloquesProcedimientos() {
+  const ahora = Date.now();
+  if (bloquesCache.data && (ahora - bloquesCache.timestamp) < CACHE_TTL_MS) {
+    return bloquesCache.data;
+  }
   if (!GOOGLE_SHEET_ID || !GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_PRIVATE_KEY) return null;
   try {
     const auth = new google.auth.JWT(GOOGLE_SERVICE_ACCOUNT_EMAIL, null, GOOGLE_PRIVATE_KEY, ["https://www.googleapis.com/auth/spreadsheets.readonly"]);
     const sheets = google.sheets({ version: "v4", auth });
-    const response = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEET_ID, range: "A:Z" });
-    return response.data.values || [];
+
+    // Detecta automáticamente las pestañas de agenda (AGENDA_2026, AGENDA_2027, etc.)
+    const meta = await sheets.spreadsheets.get({ spreadsheetId: GOOGLE_SHEET_ID, fields: "sheets.properties.title" });
+    const nombresHojas = (meta.data.sheets || []).map(s => s.properties.title);
+    const hojasAgenda = nombresHojas.filter(n => n.toUpperCase().startsWith("AGENDA_"));
+    if (hojasAgenda.length === 0) {
+      console.error("Sheet: no se encontraron pestañas AGENDA_*");
+      return null;
+    }
+
+    const response = await sheets.spreadsheets.values.batchGet({
+      spreadsheetId: GOOGLE_SHEET_ID,
+      ranges: hojasAgenda.map(h => `${h}!A:L`),
+    });
+
+    const filas = [];
+    for (const range of response.data.valueRanges || []) {
+      filas.push(...(range.values || []));
+    }
+    if (filas.length === 0) return null;
+
+    const header = filas[0];
+    const idx = {
+      fecha: header.indexOf("Fecha"),
+      centro: header.indexOf("Centro"),
+      actividad: header.indexOf("Actividad"),
+      inicio: header.indexOf("Inicio"),
+      fin: header.indexOf("Fin"),
+      estado: header.indexOf("Estado"),
+    };
+    if (Object.values(idx).some(v => v === -1)) {
+      console.error("Sheet: faltan columnas esperadas (Fecha/Centro/Actividad/Inicio/Fin/Estado)");
+      return null;
+    }
+
+    const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+    const bloques = [];
+    for (const fila of filas.slice(1)) {
+      if (fila[idx.actividad] !== "Procedimientos" || fila[idx.estado] !== "Abrir") continue;
+      const sedeKey = CENTRO_SEDE_MAP[fila[idx.centro]];
+      if (!sedeKey) continue;
+      const fechaStr = fila[idx.fecha];
+      if (!fechaStr) continue;
+      const [d, m, y] = fechaStr.split("/").map(Number);
+      const fechaObj = new Date(y, m - 1, d);
+      if (isNaN(fechaObj.getTime()) || fechaObj < hoy) continue;
+      bloques.push({
+        fecha: fechaStr,
+        fechaObj,
+        sedeKey,
+        sede: nombreSede(sedeKey),
+        inicio: fila[idx.inicio],
+        fin: fila[idx.fin],
+      });
+    }
+    bloques.sort((a, b) => a.fechaObj - b.fechaObj);
+    bloquesCache = { data: bloques, timestamp: ahora };
+    console.log(`📅 Sheet: ${bloques.length} bloques de procedimientos cargados`);
+    return bloques;
   } catch (err) {
-    console.error("Error Google Sheets:", err.message);
+    console.error("Error leyendo bloques de procedimientos:", err.message);
     return null;
   }
+}
+
+// Respaldo fijo (patrón semanal antiguo) si el Sheet no tiene datos para la sede
+function bloquesBaseFallback(sedeKey, cantidad = 8) {
+  const info = DISPONIBILIDAD_BASE[sedeKey];
+  if (!info) return [];
+  const [inicio, fin] = info.horario.split(" a ");
+  const fechas = proximosDias(info.dia, cantidad, sedeKey);
+  return fechas.map(f => {
+    const [d, m, y] = f.fecha.split("/").map(Number);
+    return { fecha: f.fecha, fechaObj: new Date(y, m - 1, d), sedeKey, sede: nombreSede(sedeKey), inicio, fin };
+  });
+}
+
+// Bloques reales de una sede: usa el Sheet si tiene datos, si no cae al respaldo fijo
+async function obtenerBloquesSede(sedeKey) {
+  const bloques = await getBloquesProcedimientos();
+  const bloquesSede = bloques ? bloques.filter(b => b.sedeKey === sedeKey) : [];
+  if (bloquesSede.length > 0) return bloquesSede;
+  return bloquesBaseFallback(sedeKey);
 }
 // ============================================================
 // GPT
@@ -311,7 +366,9 @@ function buildRawEmail({ from, to, cc, bcc, subject, body, attachment }) {
 const DESTINO_POR_SEDE = {
   vitacura:      "presupuesto.vitacura@clinicasantamaria.cl",
   los_dominicos: "presupuesto.losdominicos@clinicasantamaria.cl",
-  bellavista:    "Agendamiento.examenes@clinicasantamaria.cl",
+  // Bellavista redirige a Los Dominicos: ese equipo puede agendar cualquier sede
+  // y tiene menos carga que el correo de Bellavista.
+  bellavista:    "presupuesto.losdominicos@clinicasantamaria.cl",
 };
 async function sendSolicitudEmail(session) {
   const accessToken = await getGmailAccessToken();
@@ -461,25 +518,35 @@ async function enviarSedeProcedimiento(to, sedes) {
   await sendWhatsAppList(to, "¿En qué sede prefieres el procedimiento?", items, "Ver sedes");
 }
 async function enviarFechas(to, sedeKey, offset = 0) {
-  const info = DISPONIBILIDAD_BASE[sedeKey];
-  const fechas = proximosDias(info.dia, 8, sedeKey);
-  const pagina = fechas.slice(offset, offset + 4);
-  const items = pagina.map((f, i) => {
-    const partes = f.label.split(" ");
-    return { id: (i + 1).toString(), title: `${partes[0]} ${partes[1]}`, description: partes[2] || "" };
-  });
-  if (offset + 4 < fechas.length) items.push({ id: "sig", title: "Ver más fechas ▶" });
+  const bloques = await obtenerBloquesSede(sedeKey);
+  const pagina = bloques.slice(offset, offset + 4);
+  const items = pagina.map((b, i) => ({
+    id: (i + 1).toString(),
+    title: `${DIAS_SEMANA[b.fechaObj.getDay()].slice(0, 3)} ${b.fecha}`,
+    description: `${b.inicio}–${b.fin}`,
+  }));
+  if (offset + 4 < bloques.length) items.push({ id: "sig", title: "Ver más fechas ▶" });
   if (offset > 0) items.push({ id: "ant", title: "◀ Atrás" });
-  await sendWhatsAppList(to, `Proximas fechas en ${nombreSede(sedeKey)}:`, items, "Ver fechas");
+  if (items.length === 0) {
+    await sendWhatsAppMessage(to, `No encontramos bloques de procedimientos próximos en ${nombreSede(sedeKey)}. Escribe *menú* para volver al inicio o intenta con otra sede.`);
+    return;
+  }
+  await sendWhatsAppList(to, `Próximos bloques de procedimientos en ${nombreSede(sedeKey)}:`, items, "Ver fechas");
 }
 async function enviarTodasLasFechas(to, sedes) {
-  const fechas = todasLasFechas30Dias(sedes);
-  if (fechas.length === 0) { await sendWhatsAppMessage(to, "No hay fechas disponibles en los próximos 30 días."); return; }
-  const items = fechas.slice(0, 10).map((f, i) => {
-    const partes = f.label.split(" — ");
-    return { id: (i + 1).toString(), title: partes[0] || f.label, description: partes[1] || "" };
-  });
-  await sendWhatsAppList(to, "Fechas disponibles en los proximos 30 días:", items, "Ver fechas");
+  let todas = [];
+  for (const sedeKey of sedes) {
+    const bloques = await obtenerBloquesSede(sedeKey);
+    todas.push(...bloques);
+  }
+  todas.sort((a, b) => a.fechaObj - b.fechaObj);
+  if (todas.length === 0) { await sendWhatsAppMessage(to, "No hay bloques de procedimientos disponibles próximamente."); return; }
+  const items = todas.slice(0, 10).map((b, i) => ({
+    id: (i + 1).toString(),
+    title: `${DIAS_SEMANA[b.fechaObj.getDay()].slice(0, 3)} ${b.fecha}`,
+    description: `${b.sede} ${b.inicio}–${b.fin}`,
+  }));
+  await sendWhatsAppList(to, "Próximos bloques de procedimientos disponibles:", items, "Ver fechas");
 }
 async function enviarOtraDudaMenu(to) {
   await sendWhatsAppList(to, "¿En qué puedo ayudarte?",
@@ -644,7 +711,6 @@ async function procesarMensaje(from, text, session, message = null) {
     if (t === "1") { session.data.anticoagulantes = "Sí"; session.step = STEPS.GLP1; }
     else if (t === "2") { session.data.anticoagulantes = "No"; session.step = STEPS.GLP1; }
     else { await enviarAnticoagulantes(from); return null; }
-    // GLP-1 solo aplica a procedimientos de tracto alto
     const requiereGlp1 = ["endoscopia", "ambos", "ligadura_varices", "polipectomia_alta"];
     if (!requiereGlp1.includes(session.data.procedimientoKey)) {
       session.data.glp1 = "No aplica";
@@ -665,19 +731,16 @@ async function procesarMensaje(from, text, session, message = null) {
     session.step = STEPS.SEDE_PROCEDIMIENTO;
     let sedes = SEDES_POR_PROCEDIMIENTO[session.data.procedimientoKey] || Object.keys(DISPONIBILIDAD_BASE);
     if (session.data.marcapasos === "Sí") sedes = sedes.filter(s => s !== "vitacura");
-    // Filtro por edad: Los Dominicos y Vitacura solo 18-80 años
     const edad = session.data.edad || 0;
     if (edad < 18 || edad > 80) {
       sedes = sedes.filter(s => s !== "vitacura" && s !== "los_dominicos");
       if (sedes.length === 0) sedes = ["bellavista"];
       await sendWhatsAppMessage(from, `ℹ️ Dado que tienes ${edad} años, el procedimiento debe realizarse en *Bellavista*, que cuenta con la infraestructura adecuada para tu caso.`);
     }
-    // Guardar sedes filtradas en sesión para usarlas después
     session.data.sedesFiltradas = sedes;
     await enviarSedeProcedimiento(from, sedes); return null;
   }
   if (session.step === STEPS.SEDE_PROCEDIMIENTO) {
-    // Usar sedes ya filtradas (por marcapasos y edad)
     let sedes = session.data.sedesFiltradas || SEDES_POR_PROCEDIMIENTO[session.data.procedimientoKey] || Object.keys(DISPONIBILIDAD_BASE);
     const verTodosIdx = (sedes.length + 1).toString();
     if (t === verTodosIdx) {
@@ -699,17 +762,24 @@ async function procesarMensaje(from, text, session, message = null) {
     if (t === "sig") { session.data.fechaOffset = offset + 4; session.step = STEPS.FECHA_SIGUIENTE; await enviarFechas(from, sedeKey, session.data.fechaOffset); return null; }
     if (t === "ant") { session.data.fechaOffset = Math.max(0, offset - 4); session.step = session.data.fechaOffset === 0 ? STEPS.FECHA : STEPS.FECHA_SIGUIENTE; await enviarFechas(from, sedeKey, session.data.fechaOffset); return null; }
     if (esTodasLasSedes) {
-      const fechas = todasLasFechas30Dias(sedes);
+      let todas = [];
+      for (const sk of sedes) { todas.push(...(await obtenerBloquesSede(sk))); }
+      todas.sort((a, b) => a.fechaObj - b.fechaObj);
       const idx = parseInt(t) - 1;
-      if (idx >= 0 && idx < fechas.length) { session.data.fechaPreferida = fechas[idx].label; session.data.sede = fechas[idx].sede; session.data.sedeKey = fechas[idx].sedeKey; }
-      else if (text.trim().length >= 8) { session.data.fechaPreferida = text.trim(); }
+      if (idx >= 0 && idx < todas.length) {
+        const b = todas[idx];
+        session.data.fechaPreferida = `${DIAS_SEMANA[b.fechaObj.getDay()]} ${b.fecha} — ${b.sede} (${b.inicio}–${b.fin})`;
+        session.data.sede = b.sede; session.data.sedeKey = b.sedeKey;
+      } else if (text.trim().length >= 8) { session.data.fechaPreferida = text.trim(); }
       else { await enviarTodasLasFechas(from, sedes); return null; }
     } else {
-      const fechas = proximosDias(DISPONIBILIDAD_BASE[sedeKey]?.dia || "lunes", 8, sedeKey);
-      const pagina = fechas.slice(offset, offset + 4);
+      const bloques = await obtenerBloquesSede(sedeKey);
+      const pagina = bloques.slice(offset, offset + 4);
       const idx = parseInt(t) - 1;
-      if (idx >= 0 && idx < pagina.length) { session.data.fechaPreferida = pagina[idx].label; }
-      else if (text.trim().length >= 8) { session.data.fechaPreferida = text.trim(); }
+      if (idx >= 0 && idx < pagina.length) {
+        const b = pagina[idx];
+        session.data.fechaPreferida = `${DIAS_SEMANA[b.fechaObj.getDay()]} ${b.fecha} (${b.inicio}–${b.fin})`;
+      } else if (text.trim().length >= 8) { session.data.fechaPreferida = text.trim(); }
       else { await enviarFechas(from, sedeKey, offset); return null; }
     }
     session.data.fechaOffset = 0;
